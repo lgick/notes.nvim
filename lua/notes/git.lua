@@ -56,7 +56,8 @@ function M.ensure_repo(cb)
   end)
 end
 
--- Pull uses the upstream set by clone, no explicit branch needed
+-- Pull uses the upstream set by clone, no explicit branch needed.
+-- Skips silently if the remote has no branches yet (freshly created repo).
 function M.pull(cb)
   local c = cfg()
 
@@ -65,11 +66,18 @@ function M.pull(cb)
     return
   end
 
-  git({ 'pull', '--rebase' }, c.dir, function(res)
-    if res.code ~= 0 then
-      notify('Pull failed: ' .. (res.stderr or ''), vim.log.levels.WARN)
+  git({ 'ls-remote', '--heads', 'origin' }, c.dir, function(ls_res)
+    if ls_res.code ~= 0 or not ls_res.stdout or ls_res.stdout == '' then
+      cb()
+      return
     end
-    cb()
+
+    git({ 'pull', '--rebase' }, c.dir, function(res)
+      if res.code ~= 0 then
+        notify('Pull failed: ' .. (res.stderr or ''), vim.log.levels.WARN)
+      end
+      cb()
+    end)
   end)
 end
 
