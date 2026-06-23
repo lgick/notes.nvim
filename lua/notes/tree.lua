@@ -5,6 +5,8 @@ local M = {}
 local api = vim.api
 local fn = vim.fn
 
+local ns = api.nvim_create_namespace('notes_tree')
+
 local function cfg()
   return require('notes').config
 end
@@ -105,6 +107,19 @@ function M.render()
   vim.bo[st.tree_buf].modifiable = true
   api.nvim_buf_set_lines(st.tree_buf, 0, -1, false, lines)
   vim.bo[st.tree_buf].modifiable = false
+
+  api.nvim_buf_clear_namespace(st.tree_buf, ns, 0, -1)
+  for i, node in ipairs(st.nodes) do
+    local group
+    if st.cut_node and node.path == st.cut_node.path then
+      group = 'NotesCut'
+    elseif node.type == 'dir' then
+      group = 'NotesDir'
+    else
+      group = 'NotesFile'
+    end
+    api.nvim_buf_add_highlight(st.tree_buf, ns, group, i - 1, 0, -1)
+  end
 end
 
 local function current_node()
@@ -140,46 +155,68 @@ function M.open_file(node)
   end)
 
   require('notes.ui').set_nav_keymaps(api.nvim_win_get_buf(st.edit_win))
+  require('notes.ui').set_edit_title(node.path)
   api.nvim_set_current_win(st.edit_win)
 end
 
-function M.on_enter()
+function M.toggle_dir()
   local node = current_node()
-  if not node then
+  if not node or node.type ~= 'dir' then
     return
   end
 
-  if node.type == 'dir' then
-    local st = state()
-    st.expanded[node.path] = not st.expanded[node.path] or nil
-    M.render()
-  else
-    M.open_file(node)
-  end
+  local st = state()
+  st.expanded[node.path] = not st.expanded[node.path] or nil
+  M.render()
 end
 
-function M.create()
+function M.open_selected()
   local node = current_node()
-  local root = cfg().dir
+  if not node or node.type ~= 'file' then
+    return
+  end
+  M.open_file(node)
+end
+
+-- new.md, new1.md, new2.md… — первое свободное имя в каталоге base
+local function default_name(base)
+  if fn.filereadable(base .. '/new.md') ~= 1 then
+    return 'new.md'
+  end
+  local i = 1
+  while fn.filereadable(base .. '/new' .. i .. '.md') == 1 do
+    i = i + 1
+  end
+  return 'new' .. i .. '.md'
+end
+
+function M.create_file()
+  local node = current_node()
   local base = target_dir(node)
 
-  vim.ui.input({ prompt = 'Create (name/ for folder, name for .md file): ' }, function(input)
+  vim.ui.input({ prompt = 'New file: ', default = default_name(base) }, function(input)
     if not input or input == '' then
       return
     end
 
-    if input:sub(-1) == '/' then
-      -- directories only at the root level (one level of nesting)
-      local name = input:sub(1, -2)
-      fn.mkdir(root .. '/' .. name, 'p')
-    else
-      local name = input
-      if not name:match('%.md$') then
-        name = name .. '.md'
-      end
-      fn.writefile({}, base .. '/' .. name)
+    local name = input
+    if not name:match('%.md$') then
+      name = name .. '.md'
     end
+    fn.writefile({}, base .. '/' .. name)
+    M.render()
+  end)
+end
 
+function M.create_dir()
+  local root = cfg().dir
+
+  vim.ui.input({ prompt = 'New folder: ' }, function(input)
+    if not input or input == '' then
+      return
+    end
+    -- directories only at the root level (one level of nesting)
+    fn.mkdir(root .. '/' .. input, 'p')
     M.render()
   end)
 end
@@ -206,6 +243,7 @@ function M.cut()
   end
 
   state().cut_node = node
+  M.render()
   vim.notify('[notes.nvim] Cut: ' .. node.name)
 end
 
@@ -235,22 +273,22 @@ function M.paste()
 end
 
 function M.attach(buf)
+  local keys = cfg().keys
   local function map(lhs, rhs, desc)
     vim.keymap.set('n', lhs, rhs, { buffer = buf, nowait = true, silent = true, desc = desc })
   end
 
-  map('<CR>', M.on_enter, 'Open / expand')
-  map('a', M.create, 'Create')
-  map('d', M.delete, 'Delete')
-  map('x', M.cut, 'Cut')
-  map('p', M.paste, 'Paste')
-  map('R', M.render, 'Refresh')
-  map('q', function()
-    require('notes').close()
-  end, 'Close')
-  map('<Esc>', function()
-    require('notes').close()
-  end, 'Close')
+  map(keys.toggle_dir, M.toggle_dir, 'Notes: toggle folder')
+  map(keys.open_file, M.open_selected, 'Notes: open file')
+  map(keys.create_file, M.create_file, 'Notes: create file')
+  map(keys.create_dir, M.create_dir, 'Notes: create folder')
+  map(keys.delete, M.delete, 'Notes: delete')
+  map(keys.cut, M.cut, 'Notes: cut')
+  map(keys.paste, M.paste, 'Notes: paste')
+  map(keys.refresh, M.render, 'Notes: refresh')
+  map(keys.open_github, function()
+    require('notes.git').open_github()
+  end, 'Notes: open GitHub')
 end
 
 return M

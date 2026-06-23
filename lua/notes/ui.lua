@@ -8,20 +8,54 @@ local function cfg()
   return require('notes').config
 end
 
+local function setup_highlights()
+  api.nvim_set_hl(0, 'NotesDir', { default = true, link = 'Directory' })
+  api.nvim_set_hl(0, 'NotesFile', { default = true, link = 'Normal' })
+  api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'WarningMsg' })
+end
+
+function M.set_edit_title(path)
+  local st = require('notes').state
+  if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
+    return
+  end
+
+  if path then
+    local title = path:gsub('^' .. vim.pesc(cfg().dir), '')
+    api.nvim_win_set_config(st.edit_win, { title = title, title_pos = 'center' })
+  else
+    api.nvim_win_set_config(st.edit_win, { title = '' })
+  end
+end
+
+local function focus_win(win)
+  if win and api.nvim_win_is_valid(win) then
+    api.nvim_set_current_win(win)
+  end
+end
+
 function M.set_nav_keymaps(buf)
   local st = require('notes').state
+  local keys = cfg().keys
 
-  vim.keymap.set('n', '<C-h>', function()
-    if st.tree_win and api.nvim_win_is_valid(st.tree_win) then
-      api.nvim_set_current_win(st.tree_win)
+  -- один префикс <C-w> + синхронное чтение h/j/k/l: без timeoutlen-задержки,
+  -- которую давали отдельные маппинги <C-w>h / <C-w>l
+  vim.keymap.set('n', keys.window_nav, function()
+    local ok, char = pcall(vim.fn.getcharstr)
+    if not ok then
+      return
     end
-  end, { buffer = buf, silent = true, desc = 'Notes: go to tree' })
+    local key = vim.fn.keytrans(char):lower()
+    if key == 'h' or key == 'k' then
+      focus_win(st.tree_win)
+    elseif key == 'l' or key == 'j' then
+      focus_win(st.edit_win)
+    end
+  end, { buffer = buf, silent = true, desc = 'Notes: window nav' })
 
-  vim.keymap.set('n', '<C-l>', function()
-    if st.edit_win and api.nvim_win_is_valid(st.edit_win) then
-      api.nvim_set_current_win(st.edit_win)
-    end
-  end, { buffer = buf, silent = true, desc = 'Notes: go to editor' })
+  vim.keymap.set('n', keys.close, function()
+    require('notes').close()
+  end, { buffer = buf, silent = true, desc = 'Notes: close' })
 end
 
 local function setup_autocmds(st)
@@ -41,11 +75,59 @@ local function setup_autocmds(st)
       end
     end,
   })
+
+  -- sync на :w для файлов внутри каталога заметок
+  api.nvim_create_autocmd('BufWritePost', {
+    group = group,
+    pattern = cfg().dir .. '/*',
+    callback = function()
+      -- при закрытии запись делает ui.close(); sync вызовет notes.close() один раз
+      if st.closing then
+        return
+      end
+      -- не пушить, пока не завершился стартовый restore/pull: иначе ранний :w
+      -- мог бы закоммитить «грязное» состояние каталога
+      if not st.synced then
+        return
+      end
+      if cfg().repo ~= '' then
+        require('notes.git').sync_on_exit()
+      end
+    end,
+  })
+
+  -- курсор не должен покидать окна notes
+  api.nvim_create_autocmd('WinEnter', {
+    group = group,
+    callback = function()
+      if st.closing or not require('notes').is_open() then
+        return
+      end
+      local win = api.nvim_get_current_win()
+      if win == st.tree_win or win == st.edit_win then
+        return
+      end
+      -- не перехватываем фокус у плавающих окон (vim.ui.input, уведомления);
+      -- возвращаем курсор только из обычных окон за пределами notes
+      if api.nvim_win_get_config(win).relative ~= '' then
+        return
+      end
+      vim.schedule(function()
+        local target = (st.edit_win and api.nvim_win_is_valid(st.edit_win)) and st.edit_win
+          or st.tree_win
+        if target and api.nvim_win_is_valid(target) then
+          api.nvim_set_current_win(target)
+        end
+      end)
+    end,
+  })
 end
 
 function M.open()
   local st = require('notes').state
   local c = cfg()
+
+  setup_highlights()
 
   local W = math.floor(vim.o.columns * c.width)
   local H = math.floor(vim.o.lines * c.height)
@@ -94,8 +176,6 @@ function M.open()
     row = row,
     col = col + tree_w + 2,
     border = 'rounded',
-    title = ' Markdown ',
-    title_pos = 'center',
   })
 
   require('notes.tree').attach(st.tree_buf)

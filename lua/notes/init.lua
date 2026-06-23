@@ -10,6 +10,19 @@ M.config = {
   width = 0.8, -- float width as fraction of screen
   height = 0.8, -- float height as fraction of screen
   tree_ratio = 0.28, -- fraction of the float width reserved for the tree panel
+  keys = {
+    toggle_dir = 'o', -- развернуть/свернуть папку
+    open_file = '<CR>', -- открыть файл
+    create_file = 'a', -- создать файл
+    create_dir = 'A', -- создать директорию
+    delete = 'd', -- удалить файл/папку
+    cut = 'x', -- выделить файл для перемещения
+    paste = 'p', -- вставить файл
+    refresh = 'r', -- обновить дерево
+    open_github = 'O', -- открыть репозиторий заметок в браузере
+    close = '<C-[>', -- закрыть заметки (из любого окна)
+    window_nav = '<C-w>', -- префикс навигации: затем h/k → дерево, l/j → редактор
+  },
 }
 
 M.state = {
@@ -43,16 +56,23 @@ function M.open()
   tree.render()
 
   git.ensure_repo(function()
-    if not M.state.synced and M.config.repo ~= '' then
-      git.pull(function()
+    -- восстановить случайно удалённые файлы (на каждом открытии), затем синк
+    git.restore(function()
+      if M.is_open() then
+        tree.render()
+      end
+
+      if not M.state.synced and M.config.repo ~= '' then
+        git.pull(function()
+          M.state.synced = true
+          if M.is_open() then
+            tree.render()
+          end
+        end)
+      else
         M.state.synced = true
-        if M.is_open() then
-          tree.render()
-        end
-      end)
-    else
-      M.state.synced = true
-    end
+      end
+    end)
   end)
 end
 

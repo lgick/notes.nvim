@@ -3,7 +3,7 @@
 A lightweight Neovim plugin for managing Markdown notes in floating windows, with optional GitHub synchronization via Git (SSH).
 
 ```
-╭─ Notes ──────────╮╭─ Markdown ─────────────────────────────────╮
+╭─ Notes ──────────╮╭─ /ideas/startup.md ────────────────────────╮
 │▸ work/           ││# Meeting Notes                              │
 │▾ ideas/          ││                                             │
 │    startup.md    ││Discussed Q3 roadmap. Action items:          │
@@ -14,10 +14,14 @@ A lightweight Neovim plugin for managing Markdown notes in floating windows, wit
 
 ## Features
 
-- **Floating UI** — two side-by-side floats (tree + editor), sized as a percentage of the screen, open on top of any buffer without disrupting your layout.
+- **Floating UI** — two side-by-side floats (tree + editor), sized as a percentage of the screen, open on top of any buffer without disrupting your layout. The editor float's title shows the path of the open file (`/folder/name.md`); empty when no file is open.
 - **File tree** — one level of folder nesting. Folders and `.md` files in the root; `.md` files inside subdirectories.
-- **Full file management** — create (`a`), delete (`d`), move (`x` → `p`) files and folders directly from the tree.
-- **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull --rebase`. On close: `git add -A && git commit && git push` if there are changes.
+- **Full file management** — create a file (`a`, default name `new.md`, `new1.md`, …), create a folder (`A`), delete (`d`), move (`x` → `p`) directly from the tree.
+- **Configurable keymaps** — every tree action, the close key, and panel-focus keys are remappable via `config.keys`.
+- **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull --rebase --autostash`. On `:w` and on close: `git add -A && git commit && git push` if there are changes.
+- **Crash-safe** — on every open, tracked files deleted outside the plugin (e.g. an accidental `rm`) are restored from the last commit before anything is pushed, so an empty working tree never propagates to the remote.
+- **Focus stays inside notes** — the cursor cannot leave the two floats while notes is open.
+- **Highlight groups** — `NotesDir`, `NotesFile`, `NotesCut` for folders, files, and the file staged for moving.
 - **No external dependencies** — pure Lua, no third-party plugins required.
 - **Works from any directory** — open your notes regardless of the current working directory.
 
@@ -83,8 +87,26 @@ require('notes').setup({
 
   -- Fraction of the float width given to the tree panel.
   tree_ratio = 0.28,
+
+  -- Keymaps (override individually; unset keys keep their defaults).
+  keys = {
+    toggle_dir  = 'o',       -- expand / collapse folder
+    open_file   = '<CR>',    -- open file
+    create_file = 'a',       -- create file (prompts, default new.md/new1.md/…)
+    create_dir  = 'A',       -- create folder (root only)
+    delete      = 'd',       -- delete file or folder (confirmation)
+    cut         = 'x',       -- stage file for move
+    paste       = 'p',       -- paste staged file
+    refresh     = 'r',       -- refresh tree
+    open_github = 'O',       -- open the notes repository in the browser
+    close       = '<C-[>',   -- close notes (works from any notes window)
+    window_nav  = '<C-w>',   -- prefix; then h/k → tree, l/j → editor
+  },
 })
 ```
+
+> **Note:** `<C-[>` is byte-identical to `<Esc>` in the terminal — with the default
+> `close` binding, pressing `<Esc>` in normal mode also closes notes.
 
 ### Keymap (suggested)
 
@@ -100,19 +122,38 @@ vim.keymap.set('n', '<leader>m', '<cmd>Notes<CR>', { desc = 'Notes' })
 |---------|-------------|
 | `:Notes` | Open the notes window |
 
-### Tree keymaps
+### Default keymaps
 
-| Key | Action |
-|-----|--------|
-| `<CR>` | Open file / expand-collapse folder |
-| `a` | Create file or folder (prompt) |
-| `d` | Delete file or folder (confirmation) |
-| `x` | Cut file (stage for move) |
-| `p` | Paste cut file into the folder under cursor |
-| `R` | Refresh tree |
-| `q` / `<Esc>` | Close notes |
-| `<C-h>` | Focus tree panel |
-| `<C-l>` | Focus editor panel |
+All keys are configurable via `config.keys` (see above).
+
+| Key | Action | Where |
+|-----|--------|-------|
+| `o` | Expand / collapse folder | tree |
+| `<CR>` | Open file | tree |
+| `a` | Create file (default `new.md`, `new1.md`, …) | tree |
+| `A` | Create folder (root only) | tree |
+| `d` | Delete file or folder (confirmation) | tree |
+| `x` | Cut file (stage for move) | tree |
+| `p` | Paste cut file into the folder under cursor | tree |
+| `r` | Refresh tree | tree |
+| `O` | Open the notes repository in the browser | tree |
+| `<C-w>` then `h`/`k` | Focus tree panel | both |
+| `<C-w>` then `l`/`j` | Focus editor panel | both |
+| `<C-[>` | Close notes | both |
+
+Window navigation reads the direction key right after `<C-w>` (via `getcharstr`), so it is not affected by `timeoutlen`.
+
+The cursor cannot leave the two notes floats while they are open.
+
+### Highlight groups
+
+Override these to customize tree colors (they link to sensible defaults):
+
+| Group | Default link | Applies to |
+|-------|--------------|------------|
+| `NotesDir` | `Directory` | folders |
+| `NotesFile` | `Normal` | files |
+| `NotesCut` | `WarningMsg` | file staged for moving (`x`) |
 
 ### File structure
 
@@ -132,9 +173,11 @@ Folders are **one level deep only**. Subfolders inside subfolders are not displa
 
 | Event | Action |
 |-------|--------|
-| First `:Notes` per session | `git clone` if missing, then `git pull --rebase` |
-| Subsequent `:Notes` | No network call (already synced) |
-| Closing notes | `git add -A` → `git commit -m "notes: YYYY-MM-DD HH:MM"` → `git push` (only if dirty) |
+| Every open | Restore tracked files deleted outside the plugin (`git checkout -- <deleted>`) |
+| First `:Notes` per session | `git clone` if missing, then `git pull --rebase --autostash` |
+| Subsequent `:Notes` | Restore only; no network call (already synced) |
+| Saving a file (`:w`) | `git add -A` → `git commit -m "notes: YYYY-MM-DD HH:MM"` → `git push` (only if dirty) |
+| Closing notes (`<C-[>`) | Saves the open buffer, then `git add -A` → `git commit` → `git push` (only if dirty) |
 
 Set `repo = ''` to disable all git operations.
 
