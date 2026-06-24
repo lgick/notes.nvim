@@ -23,6 +23,13 @@ local function current_input_text()
   return api.nvim_buf_get_lines(st.input_buf, 0, 1, false)[1] or ''
 end
 
+local function clear_input()
+  local st = state()
+  if st.input_buf and api.nvim_buf_is_valid(st.input_buf) then
+    api.nvim_buf_set_lines(st.input_buf, 0, -1, false, { '' })
+  end
+end
+
 function M.scan()
   local dir = cfg().dir
   local items = {}
@@ -83,8 +90,16 @@ function M.render_list()
 
   api.nvim_buf_clear_namespace(st.list_buf, ns, 0, -1)
   if not empty then
+    local query = current_input_text():lower()
     for i = 1, #st.items do
       api.nvim_buf_add_highlight(st.list_buf, ns, 'NotesFile', i - 1, 0, -1)
+      if query ~= '' then
+        local rel_lower = st.items[i].rel:lower()
+        local s, e = rel_lower:find(query, 1, true)
+        if s then
+          api.nvim_buf_add_highlight(st.list_buf, ns, 'NotesMatch', i - 1, s - 1, e)
+        end
+      end
     end
   end
 
@@ -159,6 +174,7 @@ function M.create_file()
 
     if input:sub(-1) == '/' then
       fn.mkdir(dir .. '/' .. input, 'p')
+      clear_input()
       M.populate()
       return
     end
@@ -172,6 +188,7 @@ function M.create_file()
     if fn.filereadable(target) ~= 1 then
       fn.writefile({}, target)
     end
+    clear_input()
     M.populate()
     require('notes.ui').open_in_edit(target)
   end)
@@ -186,6 +203,7 @@ function M.delete()
   local choice = fn.confirm('Delete "' .. it.rel .. '"?', '&Yes\n&No', 2)
   if choice == 1 then
     fn.delete(it.file, 'rf')
+    clear_input()
     M.populate()
   end
 end
@@ -204,6 +222,7 @@ function M.rename()
     local target = cfg().dir .. '/' .. input
     fn.mkdir(fn.fnamemodify(target, ':h'), 'p')
     fn.rename(it.file, target)
+    clear_input()
     M.populate()
   end)
 end
@@ -214,26 +233,18 @@ function M.attach_input(buf)
     vim.keymap.set(mode, lhs, rhs, { buffer = buf, nowait = true, silent = true, desc = desc })
   end
 
-  map({ 'i', 'n' }, keys.next, function()
-    M.move(1)
-  end, 'Notes: next')
-  map({ 'i', 'n' }, keys.prev, function()
-    M.move(-1)
-  end, 'Notes: prev')
-  map({ 'i', 'n' }, '<Down>', function()
-    M.move(1)
-  end, 'Notes: next')
-  map({ 'i', 'n' }, '<Up>', function()
-    M.move(-1)
-  end, 'Notes: prev')
+  local function move_and_open(delta)
+    M.move(delta)
+    M.open_selected()
+  end
+  map({ 'i', 'n' }, keys.next, function() move_and_open(1) end, 'Notes: next')
+  map({ 'i', 'n' }, keys.prev, function() move_and_open(-1) end, 'Notes: prev')
+  map({ 'i', 'n' }, '<Down>', function() move_and_open(1) end, 'Notes: next')
+  map({ 'i', 'n' }, '<Up>', function() move_and_open(-1) end, 'Notes: prev')
   map({ 'i', 'n' }, keys.open_file, M.open_selected, 'Notes: open file')
-  -- <C-n>/<C-p> в поиске: скролл редактора (заодно глушит insert-автодополнение)
-  map({ 'i', 'n' }, keys.scroll_down, function()
-    require('notes.ui').scroll_edit(1)
-  end, 'Notes: scroll editor down')
-  map({ 'i', 'n' }, keys.scroll_up, function()
-    require('notes.ui').scroll_edit(-1)
-  end, 'Notes: scroll editor up')
+  -- <C-n>/<C-p> в поиске: смена активного файла в списке + автооткрытие
+  map({ 'i', 'n' }, keys.scroll_down, function() move_and_open(1) end, 'Notes: next file')
+  map({ 'i', 'n' }, keys.scroll_up, function() move_and_open(-1) end, 'Notes: prev file')
   map({ 'i', 'n' }, keys.close, function()
     require('notes').close()
   end, 'Notes: close')

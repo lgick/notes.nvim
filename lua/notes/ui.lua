@@ -13,6 +13,7 @@ local function setup_highlights()
   api.nvim_set_hl(0, 'NotesDir', { default = true, link = 'Directory' })
   api.nvim_set_hl(0, 'NotesFile', { default = true, link = 'Normal' })
   api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'WarningMsg' })
+  api.nvim_set_hl(0, 'NotesMatch', { default = true, link = 'Search' })
 end
 
 -- Геометрия трёх окон стопкой. Footprint каждого float'а включает рамку
@@ -259,6 +260,7 @@ function M.open()
   vim.bo[st.input_buf].bufhidden = 'wipe'
   vim.bo[st.input_buf].swapfile = false
   vim.bo[st.input_buf].filetype = 'NotesSearch'
+  vim.b[st.input_buf].completion = false -- отключаем blink.cmp в окне поиска
   st.input_win = api.nvim_open_win(st.input_buf, true, L.input)
   vim.wo[st.input_win].number = false
   vim.wo[st.input_win].relativenumber = false
