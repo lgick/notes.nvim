@@ -6,6 +6,7 @@ local api = vim.api
 local fn = vim.fn
 
 local ns = api.nvim_create_namespace('notes_list')
+local ns_active = api.nvim_create_namespace('notes_active')
 
 local function cfg()
   return require('notes').config
@@ -69,6 +70,23 @@ function M.filter(query)
   state().items = out
 end
 
+function M.highlight_active()
+  local st = state()
+  if not (st.list_buf and api.nvim_buf_is_valid(st.list_buf)) then
+    return
+  end
+  api.nvim_buf_clear_namespace(st.list_buf, ns_active, 0, -1)
+  local current_file = st.current_file
+  if current_file then
+    for i, it in ipairs(st.items or {}) do
+      if it.file == current_file then
+        api.nvim_buf_add_highlight(st.list_buf, ns_active, 'NotesActive', i - 1, 0, -1)
+        break
+      end
+    end
+  end
+end
+
 function M.render_list()
   local st = state()
   if not (st.list_buf and api.nvim_buf_is_valid(st.list_buf)) then
@@ -107,6 +125,8 @@ function M.render_list()
   if st.list_win and api.nvim_win_is_valid(st.list_win) and not empty then
     api.nvim_win_set_cursor(st.list_win, { 1, 0 })
   end
+
+  M.highlight_active()
 end
 
 function M.populate()
@@ -135,6 +155,7 @@ function M.open_selected()
   local it = selected()
   if it then
     require('notes.ui').open_in_edit(it.file)
+    M.highlight_active()
   end
 end
 

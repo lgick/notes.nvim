@@ -14,6 +14,7 @@ local function setup_highlights()
   api.nvim_set_hl(0, 'NotesFile', { default = true, link = 'Normal' })
   api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'WarningMsg' })
   api.nvim_set_hl(0, 'NotesMatch', { default = true, link = 'Search' })
+  api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'Visual' })
 end
 
 -- Геометрия трёх окон стопкой. Footprint каждого float'а включает рамку
@@ -165,6 +166,18 @@ local function setup_autocmds(st)
     end,
   })
 
+  -- автооткрытие файла при навигации в окне списка
+  api.nvim_create_autocmd('CursorMoved', {
+    group = group,
+    buffer = st.list_buf,
+    callback = function()
+      if api.nvim_get_current_win() ~= st.list_win then
+        return
+      end
+      require('notes.picker').open_selected()
+    end,
+  })
+
   -- живой фильтр списка по вводу в окне поиска
   api.nvim_create_autocmd({ 'TextChangedI', 'TextChanged' }, {
     group = group,
@@ -261,6 +274,7 @@ function M.open()
   vim.bo[st.input_buf].swapfile = false
   vim.bo[st.input_buf].filetype = 'NotesSearch'
   vim.b[st.input_buf].completion = false -- отключаем blink.cmp в окне поиска
+  vim.bo[st.input_buf].complete = '' -- отключаем нативный keyword-completion
   st.input_win = api.nvim_open_win(st.input_buf, true, L.input)
   vim.wo[st.input_win].number = false
   vim.wo[st.input_win].relativenumber = false
