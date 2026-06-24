@@ -284,7 +284,12 @@ function M.attach_list(buf)
     vim.keymap.set('n', lhs, rhs, { buffer = buf, nowait = true, silent = true, desc = desc })
   end
 
-  map(keys.open_file, M.open_selected, 'Notes: open file')
+  map(keys.open_file, function()
+    local st = state()
+    if st.edit_win and api.nvim_win_is_valid(st.edit_win) then
+      api.nvim_set_current_win(st.edit_win)
+    end
+  end, 'Notes: focus editor')
   map(keys.create_file, M.create_file, 'Notes: create')
   map(keys.delete, M.delete, 'Notes: delete')
   map(keys.rename, M.rename, 'Notes: rename')
