@@ -11,18 +11,18 @@ M.config = {
   height = 0.8, -- float height as fraction of screen
   list_height = 20, -- height of the list window (content rows)
   keys = {
-    open_file = '<CR>', -- открыть выделенный файл в редакторе
-    next = '<C-j>', -- следующий в списке (из окна поиска)
-    prev = '<C-k>', -- предыдущий в списке (из окна поиска)
-    create_file = 'a', -- создать файл (или папку, если имя оканчивается на /)
-    delete = 'd', -- удалить файл/папку
-    rename = 'r', -- переименовать/переместить файл
-    refresh = 'R', -- обновить список
-    open_github = 'O', -- открыть репозиторий заметок в браузере
-    scroll_down = '<C-n>', -- прокрутить открытый файл вниз (из поиска/списка)
-    scroll_up = '<C-p>', -- прокрутить открытый файл вверх (из поиска/списка)
-    close = '<C-[>', -- закрыть заметки (≡ <Esc>)
-    window_nav = '<C-w>', -- префикс навигации по окнам по порядку: j → ниже, k → выше
+    open_file = '<CR>', -- search: jump to list; list: open selected file in editor
+    next = '<C-j>', -- move selection down + open file (from search)
+    prev = '<C-k>', -- move selection up + open file (from search)
+    create_file = 'a', -- create file or folder (trailing / = folder; no ext = .txt)
+    delete = 'd', -- delete file/folder
+    rename = 'r', -- rename / move file (accepts relative path)
+    refresh = 'R', -- refresh the list
+    open_github = 'O', -- open the notes repo in the browser
+    scroll_down = '<C-n>', -- search: move selection down + open; list: scroll editor down
+    scroll_up = '<C-p>', -- search: move selection up + open; list: scroll editor up
+    close = '<C-[>', -- close notes (≡ <Esc> in terminal)
+    window_nav = '<C-w>', -- prefix: j → window down, k → up (search → list → editor)
   },
 }
 
@@ -36,8 +36,8 @@ M.state = {
   edit_win = nil,
   edit_buf = nil,
   current_file = nil, -- path of the file currently open in the editor
-  all_items = nil, -- полный скан: массив { file, rel, mtime }
-  items = nil, -- отфильтрованный массив
+  all_items = nil, -- full scan: array of { file, rel, mtime }
+  items = nil, -- filtered array
 }
 
 function M.is_open()
@@ -67,7 +67,7 @@ function M.open()
   picker.populate()
 
   git.ensure_repo(function()
-    -- восстановить случайно удалённые файлы (на каждом открытии), затем синк
+    -- restore accidentally deleted tracked files before each pull
     git.restore(function()
       if M.is_open() then
         picker.populate()

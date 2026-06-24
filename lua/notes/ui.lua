@@ -17,9 +17,9 @@ local function setup_highlights()
   api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'Visual' })
 end
 
--- Геометрия трёх окон стопкой. Footprint каждого float'а включает рамку
--- ('rounded' добавляет +1 строку сверху/снизу и +1 столбец слева/справа);
--- width/height в nvim_open_win — это content, рамка рисуется снаружи.
+-- Geometry of three stacked floats. Each float's footprint includes the border
+-- ('rounded' adds +1 row top/bottom and +1 col each side);
+-- width/height in nvim_open_win are content dimensions; the border is drawn outside.
 local function layout()
   local c = cfg()
   local W = math.floor(vim.o.columns * c.width)
@@ -27,13 +27,13 @@ local function layout()
   local top = math.floor((vim.o.lines - H) / 2)
   local left = math.floor((vim.o.columns - W) / 2)
 
-  local cw = W - 2 -- content width (минус левая+правая рамка)
+  local cw = W - 2 -- content width (1 col border each side)
   local col = left + 1 -- content col
 
   local input_h = 1
-  local fp_input = input_h + 2 -- footprint строк
+  local fp_input = input_h + 2 -- total rows including border
 
-  -- оставить ≥1 строку на edit: H - fp_input - fp_edit_min(=3)
+  -- keep ≥1 row for edit: H - fp_input - fp_edit_min(=3)
   local list_h = math.min(c.list_height, H - fp_input - 3 - 2)
   list_h = math.max(list_h, 1)
   local fp_list = list_h + 2
@@ -69,7 +69,7 @@ local function layout()
       col = col,
       row = top + fp_input + fp_list + 1,
       border = 'rounded',
-    }, -- title задаётся в open_in_edit (путь файла)
+    }, -- title is set in open_in_edit (file path)
   }
 end
 
@@ -87,7 +87,7 @@ function M.set_edit_title(path)
   end
 end
 
--- Прокрутка открытого файла из поиска/списка: <C-e>/<C-y> внутри edit-окна
+-- Scroll the open file from search/list: sends <C-e>/<C-y> inside edit_win
 function M.scroll_edit(delta)
   local st = require('notes').state
   if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
@@ -103,9 +103,8 @@ function M.set_nav_keymaps(buf)
   local st = require('notes').state
   local keys = cfg().keys
 
-  -- один префикс <C-w> + синхронное чтение j/k: без timeoutlen-задержки.
-  -- Навигация строго по порядку окон (поиск → список → редактор), без пропусков;
-  -- j — к следующему ниже, k — к предыдущему выше.
+  -- single prefix + synchronous getcharstr: no timeoutlen delay.
+  -- Ordered navigation only (search → list → editor); j down, k up; no skipping.
   local function nav()
     local ok, char = pcall(vim.fn.getcharstr)
     if not ok then
@@ -140,7 +139,7 @@ function M.set_nav_keymaps(buf)
   end
 
   vim.keymap.set({ 'n', 'i' }, keys.window_nav, function()
-    -- из insert (окно поиска) выходим в normal, чтобы префикс не вставлялся
+    -- leave insert first so the prefix key is not typed into the buffer
     if api.nvim_get_mode().mode:sub(1, 1) == 'i' then
       vim.cmd('stopinsert')
     end
@@ -166,7 +165,7 @@ local function setup_autocmds(st)
     end,
   })
 
-  -- автооткрытие файла при навигации в окне списка
+  -- auto-open file when navigating the list window
   api.nvim_create_autocmd('CursorMoved', {
     group = group,
     buffer = st.list_buf,
@@ -178,7 +177,7 @@ local function setup_autocmds(st)
     end,
   })
 
-  -- живой фильтр списка по вводу в окне поиска
+  -- live filter: update list on every keystroke in the search box
   api.nvim_create_autocmd({ 'TextChangedI', 'TextChanged' }, {
     group = group,
     buffer = st.input_buf,
@@ -190,17 +189,16 @@ local function setup_autocmds(st)
     end,
   })
 
-  -- sync на :w для файлов внутри каталога заметок (паттерн * матчит и подкаталоги)
+  -- git sync on :w for files inside the notes directory (* also matches subdirs)
   api.nvim_create_autocmd('BufWritePost', {
     group = group,
     pattern = cfg().dir .. '/*',
     callback = function()
-      -- при закрытии запись делает ui.close(); sync вызовет notes.close() один раз
+      -- close() already writes and syncs once; guard prevents a second concurrent chain
       if st.closing then
         return
       end
-      -- не пушить, пока не завершился стартовый restore/pull: иначе ранний :w
-      -- мог бы закоммитить «грязное» состояние каталога
+      -- skip push until initial restore/pull finishes: an early :w could commit a dirty tree
       if not st.synced then
         return
       end
@@ -210,7 +208,7 @@ local function setup_autocmds(st)
     end,
   })
 
-  -- ресайз терминала → пересчитать геометрию трёх окон
+  -- terminal resize: recompute geometry of all three floats
   api.nvim_create_autocmd('VimResized', {
     group = group,
     callback = function()
@@ -227,14 +225,14 @@ local function setup_autocmds(st)
           api.nvim_win_set_config(win, L[name])
         end
       end
-      -- L.edit без title — восстановить путь открытого файла
+      -- L.edit has no title field; re-apply the open file path
       if st.current_file then
         M.set_edit_title(st.current_file)
       end
     end,
   })
 
-  -- курсор не должен покидать окна notes
+  -- keep cursor inside the notes floats at all times
   api.nvim_create_autocmd('WinEnter', {
     group = group,
     callback = function()
@@ -245,8 +243,8 @@ local function setup_autocmds(st)
       if win == st.input_win or win == st.list_win or win == st.edit_win then
         return
       end
-      -- не перехватываем фокус у плавающих окон (vim.ui.input, уведомления);
-      -- возвращаем курсор только из обычных окон за пределами notes
+      -- don't steal focus from other floats (vim.ui.input, notifications);
+      -- only redirect from regular (non-floating) windows outside notes
       if api.nvim_win_get_config(win).relative ~= '' then
         return
       end
@@ -273,8 +271,8 @@ function M.open()
   vim.bo[st.input_buf].bufhidden = 'wipe'
   vim.bo[st.input_buf].swapfile = false
   vim.bo[st.input_buf].filetype = 'NotesSearch'
-  vim.b[st.input_buf].completion = false -- отключаем blink.cmp в окне поиска
-  vim.bo[st.input_buf].complete = '' -- отключаем нативный keyword-completion
+  vim.b[st.input_buf].completion = false -- disable blink.cmp in search
+  vim.bo[st.input_buf].complete = '' -- disable native keyword completion
   st.input_win = api.nvim_open_win(st.input_buf, true, L.input)
   vim.wo[st.input_win].number = false
   vim.wo[st.input_win].relativenumber = false
@@ -292,7 +290,7 @@ function M.open()
   st.list_win = api.nvim_open_win(st.list_buf, false, L.list)
   vim.wo[st.list_win].number = false
   vim.wo[st.list_win].relativenumber = false
-  vim.wo[st.list_win].cursorline = true -- выделение = строка под курсором
+  vim.wo[st.list_win].cursorline = true -- highlights current line
   vim.wo[st.list_win].signcolumn = 'no'
   vim.wo[st.list_win].statuscolumn = ''
 
@@ -300,7 +298,7 @@ function M.open()
   st.edit_buf = api.nvim_create_buf(false, true)
   vim.bo[st.edit_buf].buftype = 'nofile'
   api.nvim_buf_set_lines(st.edit_buf, 0, -1, false, {
-    'Выберите файл сверху (<CR>) или создайте новый (a).',
+    'Select a file above or create a new one (a).',
   })
   st.edit_win = api.nvim_open_win(st.edit_buf, false, L.edit)
   st.current_file = nil
@@ -323,8 +321,8 @@ function M.open_in_edit(path)
     return
   end
 
-  -- сохранить незакоммиченные правки текущего файла перед сменой, иначе :edit
-  -- падает с E37 (No write since last change), а правки теряются при close()
+  -- write current file before switching: :edit on a modified buffer raises E37,
+  -- and unsaved edits would be lost when close() runs
   local cur = api.nvim_win_get_buf(st.edit_win)
   if vim.bo[cur].buftype == '' and vim.bo[cur].modified then
     api.nvim_buf_call(cur, function()
@@ -340,8 +338,8 @@ function M.open_in_edit(path)
   st.edit_buf = buf
   st.current_file = path
 
-  -- ФИКС: оконные опции как у обычных файлов; НЕ пиновать StatusLine/CursorLineNr
-  -- в winhighlight — тогда глобальный UpdateInsertModeColor пользователя сработает сам
+  -- set window options like a normal file; do NOT pin StatusLine/CursorLineNr in
+  -- winhighlight — the user's global UpdateInsertModeColor (InsertEnter/Leave) must work
   vim.wo[st.edit_win].number = true
   vim.wo[st.edit_win].relativenumber = true
   vim.wo[st.edit_win].cursorline = true
@@ -352,7 +350,7 @@ function M.open_in_edit(path)
     require('notes').close()
   end, { buffer = buf, silent = true, desc = 'Notes: close' })
   M.set_edit_title(path)
-  -- фокус НЕ переносим: <CR> просто открывает файл, курсор остаётся в поиске/списке
+  -- focus is NOT moved: opening a file leaves the cursor in the search/list window
 end
 
 function M.close()

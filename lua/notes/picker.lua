@@ -37,7 +37,7 @@ function M.scan()
 
   local function walk(d, prefix)
     for name, ftype in vim.fs.dir(d) do
-      if name:sub(1, 1) ~= '.' then -- скрытые записи и .git пропускаем
+      if name:sub(1, 1) ~= '.' then -- skip hidden entries (.git included)
         local abs = d .. '/' .. name
         local rel = prefix == '' and name or prefix .. '/' .. name
         if ftype == 'directory' then
@@ -54,7 +54,7 @@ function M.scan()
     walk(dir, '')
   end
   table.sort(items, function(a, b)
-    return a.mtime > b.mtime -- недавние сверху
+    return a.mtime > b.mtime -- most recent first
   end)
   state().all_items = items
 end
@@ -99,7 +99,7 @@ function M.render_list()
   end
   local empty = #lines == 0
   if empty then
-    lines = { '(нет совпадений)' }
+    lines = { '(no matches)' }
   end
 
   vim.bo[st.list_buf].modifiable = true
@@ -121,7 +121,7 @@ function M.render_list()
     end
   end
 
-  -- курсор списка на строку 1: видимость + сброс выделения после фильтра
+  -- reset to line 1: ensures visibility and clears selection after filter change
   if st.list_win and api.nvim_win_is_valid(st.list_win) and not empty then
     api.nvim_win_set_cursor(st.list_win, { 1, 0 })
   end
@@ -172,7 +172,7 @@ function M.move(delta)
   api.nvim_win_set_cursor(st.list_win, { math.max(1, math.min(n, l + delta)), 0 })
 end
 
--- new, new1, new2… — первое свободное имя в каталоге base
+-- new, new1, new2… — first free name in the base directory
 local function default_name(base)
   if fn.filereadable(base .. '/new.txt') ~= 1 then
     return 'new.txt'
@@ -184,8 +184,8 @@ local function default_name(base)
   return 'new' .. i .. '.txt'
 end
 
--- единый create: '/' в конце → папка; без расширения → .txt; иначе как есть.
--- Относительный путь разрешён (создаём недостающие подкаталоги).
+-- unified create: trailing '/' → folder; no extension → .txt; otherwise as-is.
+-- Relative paths accepted; missing parent directories are created automatically.
 function M.create_file()
   local dir = cfg().dir
   vim.ui.input({ prompt = 'New (end with / for folder): ', default = default_name(dir) }, function(input)
@@ -205,7 +205,7 @@ function M.create_file()
       target = target .. '.txt'
     end
     fn.mkdir(fn.fnamemodify(target, ':h'), 'p')
-    -- не затирать существующий файл — просто открыть его
+    -- do not truncate an existing file, just open it
     if fn.filereadable(target) ~= 1 then
       fn.writefile({}, target)
     end
@@ -229,7 +229,7 @@ function M.delete()
   end
 end
 
--- ввод нового относительного пути перемещает файл в любой каталог (в т.ч. в корень)
+-- a new relative path moves the file to any directory (including root)
 function M.rename()
   local it = selected()
   if not it then
@@ -262,8 +262,15 @@ function M.attach_input(buf)
   map({ 'i', 'n' }, keys.prev, function() move_and_open(-1) end, 'Notes: prev')
   map({ 'i', 'n' }, '<Down>', function() move_and_open(1) end, 'Notes: next')
   map({ 'i', 'n' }, '<Up>', function() move_and_open(-1) end, 'Notes: prev')
-  map({ 'i', 'n' }, keys.open_file, M.open_selected, 'Notes: open file')
-  -- <C-n>/<C-p> в поиске: смена активного файла в списке + автооткрытие
+  -- <CR> in search jumps to the list window instead of opening the file directly
+  map({ 'i', 'n' }, keys.open_file, function()
+    local st = state()
+    if st.list_win and api.nvim_win_is_valid(st.list_win) then
+      vim.cmd('stopinsert')
+      api.nvim_set_current_win(st.list_win)
+    end
+  end, 'Notes: focus list')
+  -- <C-n>/<C-p> in search: cycle selection + auto-open
   map({ 'i', 'n' }, keys.scroll_down, function() move_and_open(1) end, 'Notes: next file')
   map({ 'i', 'n' }, keys.scroll_up, function() move_and_open(-1) end, 'Notes: prev file')
   map({ 'i', 'n' }, keys.close, function()

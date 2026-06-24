@@ -56,11 +56,10 @@ function M.ensure_repo(cb)
   end)
 end
 
--- Восстанавливает tracked-файлы, удалённые в рабочем дереве мимо плагина
--- (например `rm` в шелле). Плагин сам коммитит все свои изменения, поэтому
--- незакоммиченное удаление tracked-файла на открытии — случайное, и его нужно
--- вернуть из последнего коммита. Модификации не трогаем, чтобы не потерять
--- реальные правки; -z отключает кавычки в путях (важно для кириллицы/пробелов).
+-- Restores tracked files deleted outside the plugin (e.g. accidental `rm`).
+-- The plugin commits all its own edits, so an uncommitted deletion at open time
+-- is accidental and must be recovered from the last commit. Modified-but-present
+-- files are left untouched. -z suppresses path quoting (needed for non-ASCII/spaces).
 function M.restore(cb)
   local c = cfg()
 
@@ -102,8 +101,8 @@ function M.pull(cb)
       return
     end
 
-    -- --autostash: спрятать локальные незакоммиченные правки перед rebase
-    -- и вернуть их после, иначе pull падает на «грязном» каталоге
+    -- --autostash: stash local uncommitted edits before rebase, restore after;
+    -- without it pull fails on a dirty working tree
     git({ 'pull', '--rebase', '--autostash' }, c.dir, function(res)
       if res.code ~= 0 then
         notify('Pull failed: ' .. (res.stderr or ''), vim.log.levels.WARN)
