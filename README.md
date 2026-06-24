@@ -22,8 +22,8 @@ A lightweight Neovim plugin for managing notes in floating windows, with optiona
 ## Features
 
 - **Floating UI** — three stacked floats (search + flat list + editor), sized as a percentage of the screen, open on top of any buffer without disrupting your layout. They re-center automatically on terminal resize. The editor float's title shows the path of the open file (`/folder/name.md`).
-- **Live search** — type in the top window to filter the list by substring of the relative path. Move the selection with `<C-j>`/`<C-k>` (or `↓`/`↑`) without leaving the search box.
-- **Flat list, any format** — files of any extension are listed recursively (`folder/name.ext`), sorted by modification time (most recent first). Opening a file applies its native filetype highlighting.
+- **Live search** — type in the top window to filter the list by substring of the relative path. Matched characters are highlighted in the list. Moving the selection with `<C-n>`/`<C-p>` (or `<C-j>`/`<C-k>`, `↓`/`↑`) instantly opens the file in the editor without leaving the search box. After any create/delete/rename the search field is cleared automatically.
+- **Flat list, any format** — files of any extension are listed recursively (`folder/name.ext`), sorted by modification time (most recent first). Opening a file applies its native filetype highlighting. The currently open file is highlighted in the list.
 - **Native editing** — the editor float behaves like a normal file window (`number`, `cursorline`, `signcolumn`, statusline), so global `InsertEnter`/`InsertLeave` styling works inside it.
 - **Full file management** — create (`a`), delete (`d`), rename/move (`r`), refresh (`R`) directly from the list. `a` makes a folder when the name ends with `/`, otherwise a file (a missing extension defaults to `.txt`); an existing file is opened, not overwritten. `r` and `a` accept a relative path, so a file can be moved into any folder — including back to the root.
 - **Configurable keymaps** — every action, the close key, and panel-focus keys are remappable via `config.keys`.
@@ -99,15 +99,15 @@ require('notes').setup({
   -- Keymaps (override individually; unset keys keep their defaults).
   keys = {
     open_file   = '<CR>',    -- open the selected file (focus stays in search/list)
-    next        = '<C-j>',   -- move selection down (from the search box)
-    prev        = '<C-k>',   -- move selection up (from the search box)
+    next        = '<C-j>',   -- move selection down + open file (from the search box)
+    prev        = '<C-k>',   -- move selection up + open file (from the search box)
     create_file = 'a',       -- create file/folder (trailing / = folder; no ext = .txt)
     delete      = 'd',       -- delete file (confirmation)
     rename      = 'r',       -- rename / move file (accepts a relative path)
     refresh     = 'R',       -- refresh the list
     open_github = 'O',       -- open the notes repository in the browser
-    scroll_down = '<C-n>',   -- scroll the open file down (from search/list)
-    scroll_up   = '<C-p>',   -- scroll the open file up (from search/list)
+    scroll_down = '<C-n>',   -- move selection down + open file (from search); scroll editor down (from list)
+    scroll_up   = '<C-p>',   -- move selection up + open file (from search); scroll editor up (from list)
     close       = '<C-[>',   -- close notes (works from any notes window)
     window_nav  = '<C-w>',   -- prefix; then j → next window down, k → up (in order)
   },
@@ -137,11 +137,12 @@ All keys are configurable via `config.keys` (see above).
 
 | Key | Action | Where |
 |-----|--------|-------|
-| type | Filter the list by substring | search |
-| `<C-j>` / `<C-k>`, `↓` / `↑` | Move selection | search |
-| `j` / `k` | Move selection (native) | list |
+| type | Filter the list by substring; matched characters are highlighted | search |
+| `<C-j>` / `<C-k>`, `↓` / `↑` | Move selection + open file instantly | search |
+| `<C-n>` / `<C-p>` | Move selection + open file instantly | search |
 | `<CR>` | Open the selected file (focus stays) | search / list |
-| `<C-n>` / `<C-p>` | Scroll the open file down / up | search / list |
+| `j` / `k` | Move selection + open file instantly | list |
+| `<C-n>` / `<C-p>` | Scroll the open file down / up | list |
 | `a` | Create file or folder (`/` = folder, no ext = `.txt`) | list |
 | `d` | Delete file (confirmation) | list |
 | `r` | Rename / move file (accepts a relative path) | list |
@@ -162,10 +163,12 @@ Override these to customize colors (they link to sensible defaults):
 | Group | Default link | Applies to |
 |-------|--------------|------------|
 | `NotesDir` | `Directory` | folders |
-| `NotesFile` | `Normal` | files (list rows) |
+| `NotesFile` | `Normal` | file rows in the list |
+| `NotesMatch` | `Search` | matched characters from the search query |
+| `NotesActive` | `Visual` | the line of the currently open file |
 | `NotesCut` | `WarningMsg` | (reserved) |
 
-The current selection is shown by the list window's `cursorline`, not a dedicated highlight group.
+The current cursor position in the list is shown by the window's `cursorline`; `NotesActive` is a separate highlight that marks the file currently open in the editor (stays visible when focus is elsewhere).
 
 ### File structure
 
