@@ -1,27 +1,35 @@
 # notes.nvim
 
-A lightweight Neovim plugin for managing Markdown notes in floating windows, with optional GitHub synchronization via Git (SSH).
+A lightweight Neovim plugin for managing notes in floating windows, with optional GitHub synchronization via Git (SSH).
 
 ```
-╭─ Notes ──────────╮╭─ /ideas/startup.md ────────────────────────╮
-│▸ work/           ││# Meeting Notes                              │
-│▾ ideas/          ││                                             │
-│    startup.md    ││Discussed Q3 roadmap. Action items:          │
-│    travel.md     ││- [ ] Send proposal by Friday                │
-│  journal.md      ││- [ ] Schedule follow-up                     │
-╰──────────────────╯╰─────────────────────────────────────────────╯
+╭─ Search ─────────────────────────────────────────╮
+│ todo                                              │
+╰───────────────────────────────────────────────────╯
+╭─ Notes ──────────────────────────────────────────╮
+│ work/todo.md                                      │
+│ ideas/startup.md                                  │
+│ journal.md                                        │
+╰───────────────────────────────────────────────────╯
+╭─ /work/todo.md ──────────────────────────────────╮
+│ # Meeting Notes                                   │
+│                                                   │
+│ Discussed Q3 roadmap. Action items:               │
+│ - [ ] Send proposal by Friday                     │
+╰───────────────────────────────────────────────────╯
 ```
 
 ## Features
 
-- **Floating UI** — two side-by-side floats (tree + editor), sized as a percentage of the screen, open on top of any buffer without disrupting your layout. The editor float's title shows the path of the open file (`/folder/name.md`); empty when no file is open.
-- **File tree** — one level of folder nesting. Folders and `.md` files in the root; `.md` files inside subdirectories.
-- **Full file management** — create a file (`a`, default name `new.md`, `new1.md`, …), create a folder (`A`), delete (`d`), move (`x` → `p`) directly from the tree.
-- **Configurable keymaps** — every tree action, the close key, and panel-focus keys are remappable via `config.keys`.
+- **Floating UI** — three stacked floats (search + flat list + editor), sized as a percentage of the screen, open on top of any buffer without disrupting your layout. They re-center automatically on terminal resize. The editor float's title shows the path of the open file (`/folder/name.md`).
+- **Live search** — type in the top window to filter the list by substring of the relative path. Move the selection with `<C-j>`/`<C-k>` (or `↓`/`↑`) without leaving the search box.
+- **Flat list, any format** — files of any extension are listed recursively (`folder/name.ext`), sorted by modification time (most recent first). Opening a file applies its native filetype highlighting.
+- **Native editing** — the editor float behaves like a normal file window (`number`, `cursorline`, `signcolumn`, statusline), so global `InsertEnter`/`InsertLeave` styling works inside it.
+- **Full file management** — create (`a`), delete (`d`), rename/move (`r`), refresh (`R`) directly from the list. `a` makes a folder when the name ends with `/`, otherwise a file (a missing extension defaults to `.txt`); an existing file is opened, not overwritten. `r` and `a` accept a relative path, so a file can be moved into any folder — including back to the root.
+- **Configurable keymaps** — every action, the close key, and panel-focus keys are remappable via `config.keys`.
 - **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull --rebase --autostash`. On `:w` and on close: `git add -A && git commit && git push` if there are changes.
 - **Crash-safe** — on every open, tracked files deleted outside the plugin (e.g. an accidental `rm`) are restored from the last commit before anything is pushed, so an empty working tree never propagates to the remote.
-- **Focus stays inside notes** — the cursor cannot leave the two floats while notes is open.
-- **Highlight groups** — `NotesDir`, `NotesFile`, `NotesCut` for folders, files, and the file staged for moving.
+- **Focus stays inside notes** — the cursor cannot leave the three floats while notes is open.
 - **No external dependencies** — pure Lua, no third-party plugins required.
 - **Works from any directory** — open your notes regardless of the current working directory.
 
@@ -85,28 +93,29 @@ require('notes').setup({
   width  = 0.8,
   height = 0.8,
 
-  -- Fraction of the float width given to the tree panel.
-  tree_ratio = 0.28,
+  -- Height of the list window in rows (content, excluding border).
+  list_height = 20,
 
   -- Keymaps (override individually; unset keys keep their defaults).
   keys = {
-    toggle_dir  = 'o',       -- expand / collapse folder
-    open_file   = '<CR>',    -- open file
-    create_file = 'a',       -- create file (prompts, default new.md/new1.md/…)
-    create_dir  = 'A',       -- create folder (root only)
-    delete      = 'd',       -- delete file or folder (confirmation)
-    cut         = 'x',       -- stage file for move
-    paste       = 'p',       -- paste staged file
-    refresh     = 'r',       -- refresh tree
+    open_file   = '<CR>',    -- open the selected file (focus stays in search/list)
+    next        = '<C-j>',   -- move selection down (from the search box)
+    prev        = '<C-k>',   -- move selection up (from the search box)
+    create_file = 'a',       -- create file/folder (trailing / = folder; no ext = .txt)
+    delete      = 'd',       -- delete file (confirmation)
+    rename      = 'r',       -- rename / move file (accepts a relative path)
+    refresh     = 'R',       -- refresh the list
     open_github = 'O',       -- open the notes repository in the browser
+    scroll_down = '<C-n>',   -- scroll the open file down (from search/list)
+    scroll_up   = '<C-p>',   -- scroll the open file up (from search/list)
     close       = '<C-[>',   -- close notes (works from any notes window)
-    window_nav  = '<C-w>',   -- prefix; then h/k → tree, l/j → editor
+    window_nav  = '<C-w>',   -- prefix; then j → next window down, k → up (in order)
   },
 })
 ```
 
 > **Note:** `<C-[>` is byte-identical to `<Esc>` in the terminal — with the default
-> `close` binding, pressing `<Esc>` in normal mode also closes notes.
+> `close` binding, pressing `<Esc>` also closes notes.
 
 ### Keymap (suggested)
 
@@ -128,32 +137,35 @@ All keys are configurable via `config.keys` (see above).
 
 | Key | Action | Where |
 |-----|--------|-------|
-| `o` | Expand / collapse folder | tree |
-| `<CR>` | Open file | tree |
-| `a` | Create file (default `new.md`, `new1.md`, …) | tree |
-| `A` | Create folder (root only) | tree |
-| `d` | Delete file or folder (confirmation) | tree |
-| `x` | Cut file (stage for move) | tree |
-| `p` | Paste cut file into the folder under cursor | tree |
-| `r` | Refresh tree | tree |
-| `O` | Open the notes repository in the browser | tree |
-| `<C-w>` then `h`/`k` | Focus tree panel | both |
-| `<C-w>` then `l`/`j` | Focus editor panel | both |
-| `<C-[>` | Close notes | both |
+| type | Filter the list by substring | search |
+| `<C-j>` / `<C-k>`, `↓` / `↑` | Move selection | search |
+| `j` / `k` | Move selection (native) | list |
+| `<CR>` | Open the selected file (focus stays) | search / list |
+| `<C-n>` / `<C-p>` | Scroll the open file down / up | search / list |
+| `a` | Create file or folder (`/` = folder, no ext = `.txt`) | list |
+| `d` | Delete file (confirmation) | list |
+| `r` | Rename / move file (accepts a relative path) | list |
+| `R` | Refresh the list | list |
+| `O` | Open the notes repository in the browser | list |
+| `<C-w>` then `j` | Focus next window down (in order) | any |
+| `<C-w>` then `k` | Focus next window up (in order) | any |
+| `<C-[>` / `<Esc>` | Close notes | any |
 
-Window navigation reads the direction key right after `<C-w>` (via `getcharstr`), so it is not affected by `timeoutlen`.
+Window navigation reads the direction key right after `<C-w>` (via `getcharstr`), so it is not affected by `timeoutlen`. It steps one window at a time through search → list → editor — only `j` (down) and `k` (up); no skipping.
 
-The cursor cannot leave the two notes floats while they are open.
+The cursor cannot leave the three notes floats while they are open.
 
 ### Highlight groups
 
-Override these to customize tree colors (they link to sensible defaults):
+Override these to customize colors (they link to sensible defaults):
 
 | Group | Default link | Applies to |
 |-------|--------------|------------|
 | `NotesDir` | `Directory` | folders |
-| `NotesFile` | `Normal` | files |
-| `NotesCut` | `WarningMsg` | file staged for moving (`x`) |
+| `NotesFile` | `Normal` | files (list rows) |
+| `NotesCut` | `WarningMsg` | (reserved) |
+
+The current selection is shown by the list window's `cursorline`, not a dedicated highlight group.
 
 ### File structure
 
@@ -161,13 +173,12 @@ Override these to customize tree colors (they link to sensible defaults):
 ~/notes/          ← config.dir
   folder-a/
     note.md
-    another.md
-  folder-b/
-    idea.md
+    deep/
+      nested.txt  ← any depth, any extension
   inbox.md        ← files can also live at the root
 ```
 
-Folders are **one level deep only**. Subfolders inside subfolders are not displayed.
+Files are listed recursively as `folder/name.ext`. Create or rename with a relative path to place a file at any level (`r` on `work/todo.md` → `todo.md` moves it to the root).
 
 ### Git sync behaviour
 

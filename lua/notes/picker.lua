@@ -1,0 +1,267 @@
+-- Flat list: recursive scan (any format), substring filter, live render, CRUD actions
+
+local M = {}
+
+local api = vim.api
+local fn = vim.fn
+
+local ns = api.nvim_create_namespace('notes_list')
+
+local function cfg()
+  return require('notes').config
+end
+
+local function state()
+  return require('notes').state
+end
+
+local function current_input_text()
+  local st = state()
+  if not (st.input_buf and api.nvim_buf_is_valid(st.input_buf)) then
+    return ''
+  end
+  return api.nvim_buf_get_lines(st.input_buf, 0, 1, false)[1] or ''
+end
+
+function M.scan()
+  local dir = cfg().dir
+  local items = {}
+
+  local function walk(d, prefix)
+    for name, ftype in vim.fs.dir(d) do
+      if name:sub(1, 1) ~= '.' then -- скрытые записи и .git пропускаем
+        local abs = d .. '/' .. name
+        local rel = prefix == '' and name or prefix .. '/' .. name
+        if ftype == 'directory' then
+          walk(abs, rel)
+        elseif ftype == 'file' then
+          local fstat = vim.uv.fs_stat(abs)
+          items[#items + 1] = { file = abs, rel = rel, mtime = fstat and fstat.mtime.sec or 0 }
+        end
+      end
+    end
+  end
+
+  if fn.isdirectory(dir) == 1 then
+    walk(dir, '')
+  end
+  table.sort(items, function(a, b)
+    return a.mtime > b.mtime -- недавние сверху
+  end)
+  state().all_items = items
+end
+
+function M.filter(query)
+  query = (query or ''):lower()
+  local out = {}
+  for _, it in ipairs(state().all_items or {}) do
+    if query == '' or it.rel:lower():find(query, 1, true) then
+      out[#out + 1] = it
+    end
+  end
+  state().items = out
+end
+
+function M.render_list()
+  local st = state()
+  if not (st.list_buf and api.nvim_buf_is_valid(st.list_buf)) then
+    return
+  end
+
+  local lines = {}
+  for _, it in ipairs(st.items or {}) do
+    lines[#lines + 1] = it.rel
+  end
+  local empty = #lines == 0
+  if empty then
+    lines = { '(нет совпадений)' }
+  end
+
+  vim.bo[st.list_buf].modifiable = true
+  api.nvim_buf_set_lines(st.list_buf, 0, -1, false, lines)
+  vim.bo[st.list_buf].modifiable = false
+
+  api.nvim_buf_clear_namespace(st.list_buf, ns, 0, -1)
+  if not empty then
+    for i = 1, #st.items do
+      api.nvim_buf_add_highlight(st.list_buf, ns, 'NotesFile', i - 1, 0, -1)
+    end
+  end
+
+  -- курсор списка на строку 1: видимость + сброс выделения после фильтра
+  if st.list_win and api.nvim_win_is_valid(st.list_win) and not empty then
+    api.nvim_win_set_cursor(st.list_win, { 1, 0 })
+  end
+end
+
+function M.populate()
+  M.scan()
+  M.filter('')
+  M.render_list()
+end
+
+function M.refresh()
+  local q = current_input_text()
+  M.scan()
+  M.filter(q)
+  M.render_list()
+end
+
+local function selected()
+  local st = state()
+  if not (st.list_win and api.nvim_win_is_valid(st.list_win)) then
+    return nil
+  end
+  local l = api.nvim_win_get_cursor(st.list_win)[1]
+  return (st.items or {})[l]
+end
+
+function M.open_selected()
+  local it = selected()
+  if it then
+    require('notes.ui').open_in_edit(it.file)
+  end
+end
+
+function M.move(delta)
+  local st = state()
+  if not (st.list_win and api.nvim_win_is_valid(st.list_win)) then
+    return
+  end
+  local n = #(st.items or {})
+  if n == 0 then
+    return
+  end
+  local l = api.nvim_win_get_cursor(st.list_win)[1]
+  api.nvim_win_set_cursor(st.list_win, { math.max(1, math.min(n, l + delta)), 0 })
+end
+
+-- new, new1, new2… — первое свободное имя в каталоге base
+local function default_name(base)
+  if fn.filereadable(base .. '/new.txt') ~= 1 then
+    return 'new.txt'
+  end
+  local i = 1
+  while fn.filereadable(base .. '/new' .. i .. '.txt') == 1 do
+    i = i + 1
+  end
+  return 'new' .. i .. '.txt'
+end
+
+-- единый create: '/' в конце → папка; без расширения → .txt; иначе как есть.
+-- Относительный путь разрешён (создаём недостающие подкаталоги).
+function M.create_file()
+  local dir = cfg().dir
+  vim.ui.input({ prompt = 'New (end with / for folder): ', default = default_name(dir) }, function(input)
+    if not input or input == '' then
+      return
+    end
+
+    if input:sub(-1) == '/' then
+      fn.mkdir(dir .. '/' .. input, 'p')
+      M.populate()
+      return
+    end
+
+    local target = dir .. '/' .. input
+    if fn.fnamemodify(target, ':e') == '' then
+      target = target .. '.txt'
+    end
+    fn.mkdir(fn.fnamemodify(target, ':h'), 'p')
+    -- не затирать существующий файл — просто открыть его
+    if fn.filereadable(target) ~= 1 then
+      fn.writefile({}, target)
+    end
+    M.populate()
+    require('notes.ui').open_in_edit(target)
+  end)
+end
+
+function M.delete()
+  local it = selected()
+  if not it then
+    return
+  end
+
+  local choice = fn.confirm('Delete "' .. it.rel .. '"?', '&Yes\n&No', 2)
+  if choice == 1 then
+    fn.delete(it.file, 'rf')
+    M.populate()
+  end
+end
+
+-- ввод нового относительного пути перемещает файл в любой каталог (в т.ч. в корень)
+function M.rename()
+  local it = selected()
+  if not it then
+    return
+  end
+
+  vim.ui.input({ prompt = 'Rename: ', default = it.rel }, function(input)
+    if not input or input == '' or input == it.rel then
+      return
+    end
+    local target = cfg().dir .. '/' .. input
+    fn.mkdir(fn.fnamemodify(target, ':h'), 'p')
+    fn.rename(it.file, target)
+    M.populate()
+  end)
+end
+
+function M.attach_input(buf)
+  local keys = cfg().keys
+  local function map(mode, lhs, rhs, desc)
+    vim.keymap.set(mode, lhs, rhs, { buffer = buf, nowait = true, silent = true, desc = desc })
+  end
+
+  map({ 'i', 'n' }, keys.next, function()
+    M.move(1)
+  end, 'Notes: next')
+  map({ 'i', 'n' }, keys.prev, function()
+    M.move(-1)
+  end, 'Notes: prev')
+  map({ 'i', 'n' }, '<Down>', function()
+    M.move(1)
+  end, 'Notes: next')
+  map({ 'i', 'n' }, '<Up>', function()
+    M.move(-1)
+  end, 'Notes: prev')
+  map({ 'i', 'n' }, keys.open_file, M.open_selected, 'Notes: open file')
+  -- <C-n>/<C-p> в поиске: скролл редактора (заодно глушит insert-автодополнение)
+  map({ 'i', 'n' }, keys.scroll_down, function()
+    require('notes.ui').scroll_edit(1)
+  end, 'Notes: scroll editor down')
+  map({ 'i', 'n' }, keys.scroll_up, function()
+    require('notes.ui').scroll_edit(-1)
+  end, 'Notes: scroll editor up')
+  map({ 'i', 'n' }, keys.close, function()
+    require('notes').close()
+  end, 'Notes: close')
+end
+
+function M.attach_list(buf)
+  local keys = cfg().keys
+  local function map(lhs, rhs, desc)
+    vim.keymap.set('n', lhs, rhs, { buffer = buf, nowait = true, silent = true, desc = desc })
+  end
+
+  map(keys.open_file, M.open_selected, 'Notes: open file')
+  map(keys.create_file, M.create_file, 'Notes: create')
+  map(keys.delete, M.delete, 'Notes: delete')
+  map(keys.rename, M.rename, 'Notes: rename')
+  map(keys.refresh, M.refresh, 'Notes: refresh')
+  map(keys.open_github, function()
+    require('notes.git').open_github()
+  end, 'Notes: open GitHub')
+  map(keys.scroll_down, function()
+    require('notes.ui').scroll_edit(1)
+  end, 'Notes: scroll editor down')
+  map(keys.scroll_up, function()
+    require('notes.ui').scroll_edit(-1)
+  end, 'Notes: scroll editor up')
+  map(keys.close, function()
+    require('notes').close()
+  end, 'Notes: close')
+end
+
+return M

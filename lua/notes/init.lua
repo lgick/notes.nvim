@@ -1,4 +1,4 @@
--- notes.nvim — Markdown notes in floating windows with GitHub sync
+-- notes.nvim — notes in floating windows (search + flat list + editor) with GitHub sync
 
 local M = {}
 
@@ -9,64 +9,75 @@ M.config = {
   repo = '', -- SSH remote, e.g. 'git@github.com:user/notes.git'
   width = 0.8, -- float width as fraction of screen
   height = 0.8, -- float height as fraction of screen
-  tree_ratio = 0.28, -- fraction of the float width reserved for the tree panel
+  list_height = 20, -- height of the list window (content rows)
   keys = {
-    toggle_dir = 'o', -- развернуть/свернуть папку
-    open_file = '<CR>', -- открыть файл
-    create_file = 'a', -- создать файл
-    create_dir = 'A', -- создать директорию
+    open_file = '<CR>', -- открыть выделенный файл в редакторе
+    next = '<C-j>', -- следующий в списке (из окна поиска)
+    prev = '<C-k>', -- предыдущий в списке (из окна поиска)
+    create_file = 'a', -- создать файл (или папку, если имя оканчивается на /)
     delete = 'd', -- удалить файл/папку
-    cut = 'x', -- выделить файл для перемещения
-    paste = 'p', -- вставить файл
-    refresh = 'r', -- обновить дерево
+    rename = 'r', -- переименовать/переместить файл
+    refresh = 'R', -- обновить список
     open_github = 'O', -- открыть репозиторий заметок в браузере
-    close = '<C-[>', -- закрыть заметки (из любого окна)
-    window_nav = '<C-w>', -- префикс навигации: затем h/k → дерево, l/j → редактор
+    scroll_down = '<C-n>', -- прокрутить открытый файл вниз (из поиска/списка)
+    scroll_up = '<C-p>', -- прокрутить открытый файл вверх (из поиска/списка)
+    close = '<C-[>', -- закрыть заметки (≡ <Esc>)
+    window_nav = '<C-w>', -- префикс навигации по окнам по порядку: j → ниже, k → выше
   },
 }
 
 M.state = {
   synced = false, -- whether pull has run this session
   closing = false, -- re-entrancy guard
-  tree_win = nil,
-  tree_buf = nil,
+  input_win = nil,
+  input_buf = nil,
+  list_win = nil,
+  list_buf = nil,
   edit_win = nil,
   edit_buf = nil,
-  cut_node = nil, -- file node staged for move (x → p)
-  nodes = nil, -- line-number → node map for the tree buffer
-  expanded = {}, -- path → true for expanded directories
+  current_file = nil, -- path of the file currently open in the editor
+  all_items = nil, -- полный скан: массив { file, rel, mtime }
+  items = nil, -- отфильтрованный массив
 }
 
 function M.is_open()
-  return M.state.tree_win ~= nil and api.nvim_win_is_valid(M.state.tree_win)
+  local st = M.state
+  for _, win in ipairs({ st.input_win, st.list_win, st.edit_win }) do
+    if win and api.nvim_win_is_valid(win) then
+      return true
+    end
+  end
+  return false
 end
 
 function M.open()
   if M.is_open() then
-    api.nvim_set_current_win(M.state.tree_win)
+    if M.state.input_win and api.nvim_win_is_valid(M.state.input_win) then
+      api.nvim_set_current_win(M.state.input_win)
+    end
     return
   end
 
   local git = require('notes.git')
   local ui = require('notes.ui')
-  local tree = require('notes.tree')
+  local picker = require('notes.picker')
 
-  -- open immediately; tree refreshes after sync completes
+  -- open immediately; list refreshes after sync completes
   ui.open()
-  tree.render()
+  picker.populate()
 
   git.ensure_repo(function()
     -- восстановить случайно удалённые файлы (на каждом открытии), затем синк
     git.restore(function()
       if M.is_open() then
-        tree.render()
+        picker.populate()
       end
 
       if not M.state.synced and M.config.repo ~= '' then
         git.pull(function()
           M.state.synced = true
           if M.is_open() then
-            tree.render()
+            picker.populate()
           end
         end)
       else
@@ -77,7 +88,7 @@ function M.open()
 end
 
 function M.close()
-  if not (M.state.tree_win or M.state.edit_win) then
+  if not M.is_open() then
     return
   end
 
