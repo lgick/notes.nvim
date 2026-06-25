@@ -10,10 +10,10 @@ A self-contained Neovim plugin written in pure Lua. No external plugin dependenc
 notes.nvim/
   lua/
     notes/
-      init.lua   — public API: setup(), open(), close(), toggle(); config; state
+      init.lua   — public API: setup(), open(), close(), close_interactive(), toggle(); config; state
       git.lua    — async git operations (clone, pull, commit, push) via vim.system
       picker.lua — flat list: scan, filter, render, CRUD actions, buffer-local keymaps
-      ui.lua     — three stacked floats: geometry, open, close, open_in_edit, nav keymaps
+      ui.lua     — three stacked split windows in a tab: open, close, open_in_edit, nav keymaps
   README.md
   CLAUDE.md
 ```
@@ -41,12 +41,13 @@ All mutable runtime state lives in one table in `init.lua`. Sub-modules access i
 M.state = {
   synced       = false,  -- pull already ran this session; prevents duplicate pulls
   closing      = false,  -- re-entrancy guard for close()
-  input_win    = nil,    -- window id of the search float
-  input_buf    = nil,    -- buffer id of the search float
-  list_win     = nil,    -- window id of the list float
-  list_buf     = nil,    -- buffer id of the list float
-  edit_win     = nil,    -- window id of the editor float
-  edit_buf     = nil,    -- buffer id of the editor float (swapped on open_in_edit)
+  tab          = nil,    -- tabpage handle for the notes tab
+  input_win    = nil,    -- window id of the search split
+  input_buf    = nil,    -- buffer id of the search split
+  list_win     = nil,    -- window id of the list split
+  list_buf     = nil,    -- buffer id of the list split
+  edit_win     = nil,    -- window id of the editor split
+  edit_buf     = nil,    -- buffer id of the editor split (swapped on open_in_edit)
   current_file = nil,    -- path of the file currently open in the editor
   all_items    = nil,    -- full scan: array of { file, rel, mtime }
   items        = nil,    -- filtered array; list line n → items[n]
@@ -67,35 +68,38 @@ Defaults are merged with user opts via `vim.tbl_deep_extend` in `setup()` (deep 
 
 - `scan()` — recursively walks `config.dir` with `vim.fs.dir`. Builds a flat array `{ file, rel, mtime }` of **every** file at any depth (any extension, not just `.md`). Skips hidden entries (`.` prefix, which also excludes `.git`). Sorts by `mtime` descending (most recent first). Stored in `state.all_items`.
 - `filter(query)` — case-insensitive substring match of `query` against each item's `rel` path (`find(query, 1, true)`); empty query keeps everything. Result → `state.items`.
-- `render_list()` — writes `item.rel` lines into `state.list_buf` (temporarily `modifiable = true`, then back to `false`). Empty result renders `(нет совпадений)`. Re-applies highlights in two namespaces: `ns` (`NotesFile` per row + `NotesMatch` on the matched substring from the current search query), then calls `highlight_active()` to mark the open file. Resets the list cursor to line 1 (selection visibility + reset after filtering).
+- `render_list()` — writes `item.rel` lines into `state.list_buf` (temporarily `modifiable = true`, then back to `false`). Empty result renders `(no matches)`. Re-applies highlights in two namespaces: `ns` (`NotesFile` per row + `NotesMatch` on the matched substring from the current search query), then calls `highlight_active()` to mark the open file. Resets the list cursor to line 1 (selection visibility + reset after filtering).
 - `highlight_active()` — clears namespace `ns_active` and adds `NotesActive` highlight to the row whose `item.file == state.current_file`. Called from `render_list()` and from `open_selected()` so the highlight stays accurate after navigation without requiring a full re-render.
 - `populate()` = `scan` + `filter('')` + `render_list`; `refresh()` (`R`) is the same but preserves the current search text. `populate` runs on open and after each git step; `refresh` re-reads the directory on demand.
 - **Selection = `list_win` cursor.** `selected()` reads `nvim_win_get_cursor(list_win)[1]` and indexes `state.items`. The list window's `cursorline` marks the cursor; `NotesActive` (separate namespace) marks the currently open file — they can differ when focus is in search or editor. `move(delta)` clamps and moves that cursor remotely.
 - `open_selected()` (`<CR>`) → `ui.open_in_edit(item.file)` + `highlight_active()`. Opens the file **without moving focus**. Also called from the `CursorMoved` autocmd when list_win has focus (auto-open on navigation).
-- CRUD actions, all relative to `config.dir`: `create_file()` (`a`) is the single create entry — it prompts with a `default` of the first free `new.txt`/`new1.txt`/… and accepts a **relative path**; a trailing `/` makes it a folder (`mkdir -p`), otherwise a missing extension defaults to `.txt`, the parent is `mkdir -p`'d, an **existing file is not truncated** (just opened), and the new file is opened in the editor. (There is no separate `create_dir`/`A`.) `delete()` (`d`) confirms then `fn.delete(file, 'rf')`. `rename()` (`r`) prompts with `default = item.rel`; the new relative path can drop or change the folder, so it doubles as **move** (e.g. `work/todo.md` → `todo.md` moves to root). Each action calls `clear_input()` then `populate()` — clearing the search field ensures the full list is shown after a structural change.
-- `attach_input(buf)` — `{ 'i', 'n' }` keymaps: `next`/`prev`/`<Down>`/`<Up>` and `scroll_down`/`scroll_up` all call `move_and_open` (move list cursor + open selected file); `open_file` opens the selected file; `close` closes notes. `attach_list(buf)` — normal-mode keymaps for `open_file`, the CRUD actions, `scroll_down`/`scroll_up` (scroll editor), and `close`. The `window_nav` prefix is added separately by `ui.set_nav_keymaps` to all three buffers; the editor buffer also gets a normal-mode `close` map in `open_in_edit`.
+- CRUD actions, all relative to `config.dir`: `create_file()` (`a`) is the single create entry — it prompts with a `default` of the first free `new.txt`/`new1.txt`/… and accepts a **relative path**; a trailing `/` makes it a folder (`mkdir -p`), otherwise a missing extension defaults to `.txt`, the parent is `mkdir -p`'d, an **existing file is not truncated** (just opened), and the new file is opened in the editor. `delete()` (`d`) confirms then `fn.delete(file, 'rf')`. `rename()` (`r`) prompts with `default = item.rel`; the new relative path can drop or change the folder, so it doubles as **move** (e.g. `work/todo.md` → `todo.md` moves to root). **Each CRUD action calls `git.sync_on_exit()` immediately after** — create, delete, and rename all trigger a commit+push without waiting for close.
+- `attach_input(buf)` — `{ 'i', 'n' }` keymaps: `next`/`prev`/`<Down>`/`<Up>` and `scroll_down`/`scroll_up` all call `move_and_open` (move list cursor + open selected file); `open_file` opens the selected file; `close` calls `close_interactive()`. `attach_list(buf)` — normal-mode keymaps for `open_file`, the CRUD actions, `scroll_down`/`scroll_up` (scroll editor), and `close`. The `window_nav` prefix is added separately by `ui.set_nav_keymaps` to all three buffers; the editor buffer also gets a normal-mode `close` map in `open_in_edit`.
 
 **Nesting:** files and folders may live at any depth — `scan` is recursive and the list shows full `folder/sub/name.ext` paths. Create/rename take a relative path, so there is no root-only restriction.
 
-### Floating windows (`ui.lua`)
+### Split windows (`ui.lua`)
 
-Three floats stacked vertically as one centered overlay: **search** (top, 1 row, titled ` Search `), **list** (middle, `config.list_height` rows, titled ` Notes `), **editor** (bottom, remaining height, **no title** until a file is opened). All titles use `title_pos = 'left'`.
+Three split windows stacked vertically inside a dedicated tab (`tabnew`): **search** (top, 1 content row, statusline shows ` Search`), **list** (middle, `config.list_height` rows, statusline shows ` Notes`), **editor** (bottom, remaining height, normal statusline showing file info). The search and list windows have `winfixheight = true` so the editor always takes the remaining space.
 
-- `layout()` — computes geometry from `config.width/height` and screen size. A `rounded` border adds +1 row top/bottom and +1 col each side (footprint = content + 2); `nvim_open_win`'s `width/height` are content. Each window's content `row` = its footprint top + 1. The list height is clamped to leave ≥1 content row for the editor. Returns the three config tables (the editor table omits `title`).
-- `open()` — `setup_highlights()` (defines `NotesDir`/`NotesFile`/`NotesCut`/`NotesMatch`/`NotesActive` with `default = true`), creates the three scratch buffers + windows from `layout()`, sets window options (search/list: no number, `signcolumn=no`; list: `cursorline=true`; editor seeded with a hint line). The search buffer additionally sets `vim.b.completion = false` (disables blink.cmp) and `vim.bo.complete = ''` (disables native keyword completion). Attaches `picker.attach_input`/`attach_list` and `set_nav_keymaps` to all three buffers, registers autocmds, and `startinsert` (focus the search box).
-- `open_in_edit(path)` — first **writes the current editor buffer if it's a modified real file** (`:silent write`), then `:edit`s the new file inside `edit_win` via `nvim_win_call`. The write is essential: without it, re-displaying a modified buffer (notably opening the same file again) fails with `E37: No write since last change`, and any unsaved edits would also be lost at `close()`. Then repoints `state.edit_buf`/`current_file` and sets the editor window options **like a normal file** (`number`, `relativenumber`, `cursorline`, `signcolumn=yes`). **Fix #2:** it does *not* pin `StatusLine`/`CursorLineNr` in `winhighlight`, so the user's global `UpdateInsertModeColor` (triggered on `InsertEnter`/`InsertLeave`) recolors the editor itself. Re-applies `set_nav_keymaps` + a normal-mode `close` map to the new buffer and sets the title. It **does not move focus** — opening a file (`<CR>`) leaves the cursor in the search/list window.
+- `open()` — `setup_highlights()` (defines `NotesDir`/`NotesFile`/`NotesCut`/`NotesMatch`/`NotesActive` with `default = true`), runs `tabnew`, places an initial scratch buffer in the base window (editor), then `split = 'above'` to create the list window, then another `split = 'above'` to create the search window above the list. Sets per-window options: `statusline = ' Notes'` / `' Search'` for list and search; `number`/`cursorline`/`signcolumn` for the editor are set in `open_in_edit`. Attaches `picker.attach_input`/`attach_list` and `set_nav_keymaps` to all three buffers, registers autocmds, and `startinsert` (focus the search box).
+- `open_in_edit(path)` — first **writes the current editor buffer if it's a modified real file** (`:silent write`), then `:edit`s the new file inside `edit_win` via `nvim_win_call`. The write is essential: without it, re-displaying a modified buffer (notably opening the same file again) fails with `E37: No write since last change`, and any unsaved edits would also be lost at `close()`. Then repoints `state.edit_buf`/`current_file` and sets the editor window options **like a normal file** (`number`, `relativenumber`, `cursorline`, `signcolumn=yes`). Does *not* pin `StatusLine`/`CursorLineNr` in `winhighlight`, so the user's global `UpdateInsertModeColor` (triggered on `InsertEnter`/`InsertLeave`) recolors the editor itself. Re-applies `set_nav_keymaps` + a normal-mode `close_interactive` map to the new buffer. It **does not move focus** — opening a file (`<CR>`) leaves the cursor in the search/list window.
 - `scroll_edit(delta)` — scrolls `edit_win` by one line via `nvim_win_call` (`<C-e>` for `delta > 0`, `<C-y>` otherwise). Bound to `scroll_down`/`scroll_up` in the search and list buffers.
-- `set_edit_title(path)` — sets the editor float's title (`title_pos = 'left'`) to `path` relative to `config.dir` (e.g. `/folder/name.md`); `nil` clears it. Note: `title_pos` may only be set with a non-empty `title`, so the clear path sets just `title = ''`.
-- `close()` — saves the editor buffer if it's a real modified file (`:silent write`), closes all three windows, resets every `*_win`/`*_buf`, `current_file`, `items`, `all_items`.
+- `close()` — sets `st.closing = true`, clears all state fields, then calls `tabclose <tabnr>` to close the entire tab. The `st.closing` guard in `WinClosed` prevents recursion when `tabclose` triggers that autocmd for each closing window.
 - `set_nav_keymaps(buf)` — adds the `window_nav` prefix (default `<C-w>`) in `n`+`i` modes; the handler `stopinsert`s, reads the next char via `getcharstr`, and moves **one window** along `{ input, list, edit }`: `j` down, `k` up (no skipping, no other keys), re-entering insert when it lands on the search window.
 
 `setup_autocmds(st)` registers in the `NotesWin` group:
-- `WinClosed` → closing any of the three floats triggers `notes.close()` (guarded by `st.closing`).
+- `WinClosed` → closing any of the three windows triggers `notes.close()` (guarded by `st.closing`).
 - `CursorMoved` on `list_buf` → if the current window is `list_win`, calls `picker.open_selected()` to auto-open the file under the cursor. The `current_win` guard prevents false triggers when `render_list()` programmatically resets the cursor to line 1 while focus is elsewhere.
 - `TextChangedI`/`TextChanged` on `input_buf` → live filter: `picker.filter(text)` + `picker.render_list()`.
-- `BufWritePost` (pattern `config.dir .. '/*'`, matches subdirs) → git sync on `:w`. Skipped when `st.closing` is true (close() already writes + syncs once; without the guard the two chains race and the second `git commit` errors "nothing to commit"), and while `st.synced` is false.
-- `VimResized` → if open, recompute `layout()` and `nvim_win_set_config` each valid window; the editor table has no `title`, so `set_edit_title(current_file)` is re-applied (**fix #4**).
-- `WinEnter` → if notes is open and focus lands in a **non-floating** window outside the three floats, schedules a jump back (prefers `edit_win`). The non-floating check keeps `vim.ui.input` / notification floats from being hijacked.
+- `BufWritePost` (pattern `config.dir .. '/*'`, matches subdirs) → git sync on `:w`. Skipped when `st.closing` is true and while `st.synced` is false (to avoid committing a dirty tree before the initial restore/pull completes).
+
+### Public API (`init.lua`)
+
+- `is_open()` — checks `state.tab` validity. If the tab was closed externally (e.g. `:tabclose`), self-heals by wiping all stale state fields so old window IDs cannot trigger false autocmd matches on a future session.
+- `open()` — guard against double-open; calls `ui.open()` + `picker.populate()`, then kicks off the async git chain (ensure_repo → restore → pull).
+- `close()` — calls `ui.close()` then `git.sync_on_exit()`. Does not prompt; safe to call from autocmds.
+- `close_interactive()` — checks the editor buffer for unsaved changes. If modified, shows a `confirm()` dialog: **Save** (`:silent write` then close+sync), **Discard** (close+sync without saving), **Cancel** (abort). Bound to the `close` key in all three windows. `toggle()` uses this as well.
 
 ### Git sync (`git.lua`)
 
@@ -103,7 +107,7 @@ All git commands run via `vim.system` (non-blocking). Callbacks are always wrapp
 
 Key design decision: **no explicit branch in pull/push**. Using `git pull --rebase --autostash` and `git push` (without `origin <branch>`) relies on the upstream tracking ref that `git clone` sets automatically. This avoids breakage when the user's `init.defaultBranch` differs from the hardcoded branch name. `--autostash` keeps the pull from failing when the working tree has uncommitted changes (it stashes them before the rebase and re-applies after).
 
-`sync_on_exit()` runs in two places: from `notes.close()` (on `<C-[>`) and from the `BufWritePost` autocmd (on `:w`). Flow:
+`sync_on_exit()` is called from: `notes.close()` (on `<C-[>`), the `BufWritePost` autocmd (on `:w`), and immediately after each CRUD action (create, delete, rename). Flow:
 1. `git status --porcelain` → if empty stdout, fall through to the unpushed-commits check.
 2. `git add -A`
 3. `git commit -m "notes: YYYY-MM-DD HH:MM"`
@@ -140,8 +144,6 @@ vim.pack.add({ src = '/Users/dmitry/Sites/my/notes.nvim' })
 require('notes').setup({
   dir  = vim.fn.expand('~/notes'),
   repo = 'git@github.com:lgick/notes.git',
-  width = 0.8,
-  height = 0.8,
 })
 ```
 
@@ -172,7 +174,10 @@ nvim --headless --clean \
 
 ## Common pitfalls
 
-- **Do not pin `StatusLine`/`CursorLineNr` in the editor's `winhighlight`** — the user's global `UpdateInsertModeColor` (`InsertEnter`/`InsertLeave`) remaps those groups via the *current window's* `winhighlight`. Pinning them in the plugin would shadow that and break insert-mode recoloring. `open_in_edit` only sets plain window options (`number`/`cursorline`/`signcolumn`/…) and leaves `winhighlight` alone (fix #2).
+- **Do not pin `StatusLine`/`CursorLineNr` in the editor's `winhighlight`** — the user's global `UpdateInsertModeColor` (`InsertEnter`/`InsertLeave`) remaps those groups via the *current window's* `winhighlight`. Pinning them in the plugin would shadow that and break insert-mode recoloring. `open_in_edit` only sets plain window options (`number`/`cursorline`/`signcolumn`/…) and leaves `winhighlight` alone.
+- **`statusline` for search/list is per-window** — set via `vim.wo[win].statusline`. Users with a statusline plugin (lualine, etc.) may want to add `NotesSearch` and `NotesList` to that plugin's exclusion list if their plugin overrides per-window statuslines.
 - **Selection is the `list_win` cursor**, not stored state. Read it with `nvim_win_get_cursor(list_win)[1]` → `state.items[n]`; move it remotely from the search box with `nvim_win_set_cursor`. `cursorline` provides the visual; there is no selection highlight group.
-- **`state.closing = true` guard** — `WinClosed` fires for every window when we close them programmatically. Without the guard, `close()` would recurse.
+- **`state.closing = true` guard** — `WinClosed` fires for every window when `tabclose` processes them. Without the guard, the scheduled `notes.close()` call would run for each window and recurse.
+- **`state.tab` self-heal in `is_open()`** — if the notes tab is closed externally (`:tabclose`), `state.tab` is stale. `is_open()` detects the invalid tabpage and wipes all state fields so old window IDs cannot cause false matches in the `WinClosed` autocmd on a subsequent open.
 - **`vim.schedule` in git callbacks** — `vim.system` callbacks run in a libuv thread. Any nvim API call from there must be deferred with `vim.schedule`.
+- **CRUD sync races** — `sync_on_exit()` is called immediately after each CRUD action. If the user rapidly creates/renames/deletes multiple files before the first push completes, git will report "nothing to commit" for the subsequent calls; this is harmless — each call does the status check and skips if clean.

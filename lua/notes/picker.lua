@@ -197,6 +197,9 @@ function M.create_file()
       fn.mkdir(dir .. '/' .. input, 'p')
       clear_input()
       M.populate()
+      if cfg().repo ~= '' then
+        require('notes.git').sync_on_exit()
+      end
       return
     end
 
@@ -212,6 +215,9 @@ function M.create_file()
     clear_input()
     M.populate()
     require('notes.ui').open_in_edit(target)
+    if cfg().repo ~= '' then
+      require('notes.git').sync_on_exit()
+    end
   end)
 end
 
@@ -226,6 +232,9 @@ function M.delete()
     fn.delete(it.file, 'rf')
     clear_input()
     M.populate()
+    if cfg().repo ~= '' then
+      require('notes.git').sync_on_exit()
+    end
   end
 end
 

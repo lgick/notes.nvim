@@ -1,35 +1,34 @@
 # notes.nvim
 
-A lightweight Neovim plugin for managing notes in floating windows, with optional GitHub synchronization via Git (SSH).
+A lightweight Neovim plugin for managing notes in a dedicated tab, with optional GitHub synchronization via Git (SSH).
 
 ```
-╭─ Search ─────────────────────────────────────────╮
-│ todo                                              │
-╰───────────────────────────────────────────────────╯
-╭─ Notes ──────────────────────────────────────────╮
-│ work/todo.md                                      │
-│ ideas/startup.md                                  │
-│ journal.md                                        │
-╰───────────────────────────────────────────────────╯
-╭─ /work/todo.md ──────────────────────────────────╮
-│ # Meeting Notes                                   │
-│                                                   │
-│ Discussed Q3 roadmap. Action items:               │
-│ - [ ] Send proposal by Friday                     │
-╰───────────────────────────────────────────────────╯
+ Search                                           ← statusline
+ todo▌                                            ← search input
+─────────────────────────────────────────────────
+ Notes                                            ← statusline
+ work/todo.md
+ ideas/startup.md
+ journal.md
+─────────────────────────────────────────────────
+ work/todo.md  [+]  utf-8  markdown  12:4        ← statusline
+ # Meeting Notes
+
+ Discussed Q3 roadmap. Action items:
+ - [ ] Send proposal by Friday
 ```
 
 ## Features
 
-- **Floating UI** — three stacked floats (search + flat list + editor), sized as a percentage of the screen, open on top of any buffer without disrupting your layout. They re-center automatically on terminal resize. The editor float's title shows the path of the open file (`/folder/name.md`).
+- **Tab-based UI** — opens in a new full-screen tab with three split windows stacked vertically: search (top), file list (middle), editor (bottom). Closing notes closes the tab.
 - **Live search** — type in the top window to filter the list by substring of the relative path. Matched characters are highlighted in the list. Moving the selection with `<C-n>`/`<C-p>` (or `<C-j>`/`<C-k>`, `↓`/`↑`) instantly opens the file in the editor without leaving the search box. After any create/delete/rename the search field is cleared automatically.
 - **Flat list, any format** — files of any extension are listed recursively (`folder/name.ext`), sorted by modification time (most recent first). Opening a file applies its native filetype highlighting. The currently open file is highlighted in the list.
-- **Native editing** — the editor float behaves like a normal file window (`number`, `cursorline`, `signcolumn`, statusline), so global `InsertEnter`/`InsertLeave` styling works inside it.
-- **Full file management** — create (`a`), delete (`d`), rename/move (`r`), refresh (`R`) directly from the list. `a` makes a folder when the name ends with `/`, otherwise a file (a missing extension defaults to `.txt`); an existing file is opened, not overwritten. `r` and `a` accept a relative path, so a file can be moved into any folder — including back to the root.
+- **Native editing** — the editor window behaves like a normal file window (`number`, `cursorline`, `signcolumn`, statusline), so global `InsertEnter`/`InsertLeave` styling and statusline plugins work inside it.
+- **Full file management** — create (`a`), delete (`d`), rename/move (`r`), refresh (`R`) directly from the list. `a` makes a folder when the name ends with `/`, otherwise a file (a missing extension defaults to `.txt`); an existing file is opened, not overwritten. `r` and `a` accept a relative path, so a file can be moved into any folder — including back to the root. **Every create/delete/rename immediately commits and pushes to GitHub.**
 - **Configurable keymaps** — every action, the close key, and panel-focus keys are remappable via `config.keys`.
-- **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull --rebase --autostash`. On `:w` and on close: `git add -A && git commit && git push` if there are changes.
+- **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull --rebase --autostash`. On `:w`: commit+push. On CRUD actions (create/delete/rename): immediate commit+push. On close (`<C-[>`): commit+push of any remaining changes.
+- **Unsaved changes prompt** — pressing `<C-[>` when the editor has unsaved changes shows a **Save / Discard / Cancel** dialog instead of silently writing or discarding.
 - **Crash-safe** — on every open, tracked files deleted outside the plugin (e.g. an accidental `rm`) are restored from the last commit before anything is pushed, so an empty working tree never propagates to the remote.
-- **Focus stays inside notes** — the cursor cannot leave the three floats while notes is open.
 - **No external dependencies** — pure Lua, no third-party plugins required.
 - **Works from any directory** — open your notes regardless of the current working directory.
 
@@ -89,11 +88,7 @@ require('notes').setup({
   -- Leave empty ('') to use notes locally without any git sync.
   repo = 'git@github.com:youruser/notes.git',
 
-  -- Float size as a fraction of the screen (0.0–1.0).
-  width  = 0.8,
-  height = 0.8,
-
-  -- Height of the list window in rows (content, excluding border).
+  -- Height of the list window in rows (content rows, excluding statusline).
   list_height = 20,
 
   -- Keymaps (override individually; unset keys keep their defaults).
@@ -129,7 +124,7 @@ vim.keymap.set('n', '<leader>m', '<cmd>Notes<CR>', { desc = 'Notes' })
 
 | Command | Description |
 |---------|-------------|
-| `:Notes` | Open the notes window |
+| `:Notes` | Open the notes tab |
 
 ### Default keymaps
 
@@ -140,8 +135,9 @@ All keys are configurable via `config.keys` (see above).
 | type | Filter the list by substring; matched characters are highlighted | search |
 | `<C-j>` / `<C-k>`, `↓` / `↑` | Move selection + open file instantly | search |
 | `<C-n>` / `<C-p>` | Move selection + open file instantly | search |
-| `<CR>` | Open the selected file (focus stays) | search / list |
-| `j` / `k` | Move selection + open file instantly | list |
+| `<CR>` | Focus the list window | search |
+| `<CR>` | Focus the editor window | list |
+| `j` / `k` | Move cursor + open file instantly | list |
 | `<C-n>` / `<C-p>` | Scroll the open file down / up | list |
 | `a` | Create file or folder (`/` = folder, no ext = `.txt`) | list |
 | `d` | Delete file (confirmation) | list |
@@ -150,11 +146,9 @@ All keys are configurable via `config.keys` (see above).
 | `O` | Open the notes repository in the browser | list |
 | `<C-w>` then `j` | Focus next window down (in order) | any |
 | `<C-w>` then `k` | Focus next window up (in order) | any |
-| `<C-[>` / `<Esc>` | Close notes | any |
+| `<C-[>` / `<Esc>` | Close notes (prompts if editor has unsaved changes) | any |
 
 Window navigation reads the direction key right after `<C-w>` (via `getcharstr`), so it is not affected by `timeoutlen`. It steps one window at a time through search → list → editor — only `j` (down) and `k` (up); no skipping.
-
-The cursor cannot leave the three notes floats while they are open.
 
 ### Highlight groups
 
@@ -169,6 +163,10 @@ Override these to customize colors (they link to sensible defaults):
 | `NotesCut` | `WarningMsg` | (reserved) |
 
 The current cursor position in the list is shown by the window's `cursorline`; `NotesActive` is a separate highlight that marks the file currently open in the editor (stays visible when focus is elsewhere).
+
+### Statusline plugins
+
+The search and list windows have `filetype` set to `NotesSearch` and `NotesList` respectively, with a fixed per-window `statusline` of ` Search` and ` Notes`. If you use a statusline plugin (lualine, etc.) that overrides per-window statuslines, add those filetypes to its exclusion list.
 
 ### File structure
 
@@ -191,7 +189,8 @@ Files are listed recursively as `folder/name.ext`. Create or rename with a relat
 | First `:Notes` per session | `git clone` if missing, then `git pull --rebase --autostash` |
 | Subsequent `:Notes` | Restore only; no network call (already synced) |
 | Saving a file (`:w`) | `git add -A` → `git commit -m "notes: YYYY-MM-DD HH:MM"` → `git push` (only if dirty) |
-| Closing notes (`<C-[>`) | Saves the open buffer, then `git add -A` → `git commit` → `git push` (only if dirty) |
+| Create / delete / rename | Immediate `git add -A` → `git commit` → `git push` |
+| Closing notes (`<C-[>`) | Optionally saves the open buffer, then `git add -A` → `git commit` → `git push` (only if dirty) |
 
 Set `repo = ''` to disable all git operations.
 

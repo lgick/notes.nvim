@@ -182,7 +182,7 @@ function M.open()
   vim.wo[st.list_win].signcolumn = 'no'
   vim.wo[st.list_win].statuscolumn = ''
   vim.wo[st.list_win].winfixheight = true
-  vim.wo[st.list_win].winbar = ' Notes '
+  vim.wo[st.list_win].statusline = ' Notes'
 
   -- search: split above list
   st.input_buf = api.nvim_create_buf(false, true)
@@ -203,7 +203,7 @@ function M.open()
   vim.wo[st.input_win].signcolumn = 'no'
   vim.wo[st.input_win].statuscolumn = ''
   vim.wo[st.input_win].winfixheight = true
-  vim.wo[st.input_win].winbar = ' Search '
+  vim.wo[st.input_win].statusline = ' Search'
 
   local picker = require('notes.picker')
   picker.attach_input(st.input_buf)
