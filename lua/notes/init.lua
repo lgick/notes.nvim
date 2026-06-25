@@ -7,8 +7,6 @@ local api = vim.api
 M.config = {
   dir = vim.fn.expand('~/notes'), -- local notes directory (git worktree)
   repo = '', -- SSH remote, e.g. 'git@github.com:user/notes.git'
-  width = 0.8, -- float width as fraction of screen
-  height = 0.8, -- float height as fraction of screen
   list_height = 20, -- height of the list window (content rows)
   keys = {
     open_file = '<CR>', -- search: jump to list; list: open selected file in editor
@@ -29,6 +27,7 @@ M.config = {
 M.state = {
   synced = false, -- whether pull has run this session
   closing = false, -- re-entrancy guard
+  tab = nil, -- tabpage handle for the notes tab
   input_win = nil,
   input_buf = nil,
   list_win = nil,
@@ -42,10 +41,16 @@ M.state = {
 
 function M.is_open()
   local st = M.state
-  for _, win in ipairs({ st.input_win, st.list_win, st.edit_win }) do
-    if win and api.nvim_win_is_valid(win) then
+  if st.tab ~= nil then
+    if api.nvim_tabpage_is_valid(st.tab) then
       return true
     end
+    -- tab was externally closed; wipe stale state so old window IDs can't trigger autocmds
+    st.tab = nil
+    st.input_win = nil; st.input_buf = nil
+    st.list_win = nil; st.list_buf = nil
+    st.edit_win = nil; st.edit_buf = nil
+    st.current_file = nil; st.items = nil; st.all_items = nil
   end
   return false
 end
@@ -99,9 +104,34 @@ function M.close()
   end
 end
 
+-- close with unsaved-changes prompt; bound to the close key in all windows
+function M.close_interactive()
+  if not M.is_open() then
+    return
+  end
+
+  local st = M.state
+  if st.edit_win and api.nvim_win_is_valid(st.edit_win) then
+    local buf = api.nvim_win_get_buf(st.edit_win)
+    if vim.bo[buf].buftype == '' and vim.bo[buf].modified then
+      local choice = vim.fn.confirm('Notes: save changes?', '&Save\n&Discard\n&Cancel', 1)
+      if choice == 3 or choice == 0 then
+        return
+      end
+      if choice == 1 then
+        api.nvim_buf_call(buf, function()
+          vim.cmd('silent write')
+        end)
+      end
+    end
+  end
+
+  M.close()
+end
+
 function M.toggle()
   if M.is_open() then
-    M.close()
+    M.close_interactive()
   else
     M.open()
   end

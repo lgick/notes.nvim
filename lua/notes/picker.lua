@@ -245,6 +245,9 @@ function M.rename()
     fn.rename(it.file, target)
     clear_input()
     M.populate()
+    if cfg().repo ~= '' then
+      require('notes.git').sync_on_exit()
+    end
   end)
 end
 
@@ -274,7 +277,7 @@ function M.attach_input(buf)
   map({ 'i', 'n' }, keys.scroll_down, function() move_and_open(1) end, 'Notes: next file')
   map({ 'i', 'n' }, keys.scroll_up, function() move_and_open(-1) end, 'Notes: prev file')
   map({ 'i', 'n' }, keys.close, function()
-    require('notes').close()
+    require('notes').close_interactive()
   end, 'Notes: close')
 end
 
@@ -304,7 +307,7 @@ function M.attach_list(buf)
     require('notes.ui').scroll_edit(-1)
   end, 'Notes: scroll editor up')
   map(keys.close, function()
-    require('notes').close()
+    require('notes').close_interactive()
   end, 'Notes: close')
 end
 
