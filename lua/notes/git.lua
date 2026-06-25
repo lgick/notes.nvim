@@ -128,11 +128,31 @@ function M.open_github()
   vim.ui.open(url)
 end
 
+-- Serialise concurrent calls: if a sync is already running, set pending and
+-- re-run once it finishes. This prevents the push race that occurs when rapid
+-- CRUD operations each trigger sync_on_exit() before the first push completes.
+local syncing = false
+local sync_pending = false
+
 function M.sync_on_exit()
   local c = cfg()
 
   if not is_repo(c.dir) then
     return
+  end
+
+  if syncing then
+    sync_pending = true
+    return
+  end
+  syncing = true
+
+  local function finish()
+    syncing = false
+    if sync_pending then
+      sync_pending = false
+      M.sync_on_exit()
+    end
   end
 
   -- use -u origin HEAD to handle missing upstream on first push
@@ -143,6 +163,7 @@ function M.sync_on_exit()
       else
         notify('Push failed: ' .. (push_res.stderr or ''), vim.log.levels.ERROR)
       end
+      finish()
     end)
   end
 
@@ -150,6 +171,7 @@ function M.sync_on_exit()
     git({ 'add', '-A' }, c.dir, function(add_res)
       if add_res.code ~= 0 then
         notify('git add failed: ' .. (add_res.stderr or ''), vim.log.levels.ERROR)
+        finish()
         return
       end
 
@@ -158,6 +180,7 @@ function M.sync_on_exit()
       git({ 'commit', '-m', msg }, c.dir, function(commit_res)
         if commit_res.code ~= 0 then
           notify('git commit failed: ' .. (commit_res.stderr or ''), vim.log.levels.ERROR)
+          finish()
           return
         end
 
@@ -184,6 +207,8 @@ function M.sync_on_exit()
       -- ahead_res.code ~= 0 means no upstream → push anyway
       if ahead_res.code ~= 0 or (ahead and ahead > 0) then
         do_push()
+      else
+        finish()
       end
     end)
   end)
