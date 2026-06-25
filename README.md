@@ -188,9 +188,22 @@ Files are listed recursively as `folder/name.ext`. Create or rename with a relat
 | Every open | Restore tracked files deleted outside the plugin (`git checkout -- <deleted>`) |
 | First `:Notes` per session | `git clone` if missing, then `git pull --rebase --autostash` |
 | Subsequent `:Notes` | Restore only; no network call (already synced) |
-| Saving a file (`:w`) | `git add -A` → `git commit -m "notes: YYYY-MM-DD HH:MM"` → `git push` (only if dirty) |
-| Create / delete / rename | Immediate `git add -A` → `git commit` → `git push` |
-| Closing notes (`<C-[>`) | Optionally saves the open buffer, then `git add -A` → `git commit` → `git push` (only if dirty) |
+| Saving a file (`:w`) | Fetch → reconcile with remote → `git add -A` → `git commit` → `git push` |
+| Create / delete / rename | Immediate fetch → reconcile → `git add -A` → `git commit` → `git push` |
+| Closing notes (`<C-[>`) | Optionally saves the open buffer, then fetch → reconcile → `git add -A` → `git commit` → `git push` |
+
+**Reconcile** means: if the remote is ahead, `git stash push` → `git pull --ff-only` → `git stash pop`. If the pop produces a conflict, a dialog appears:
+
+```
+[notes.nvim] GitHub updated: work/todo.md
+Local changes will overwrite. Push?
+[Yes] [No]
+```
+
+- **Yes** — your local version is kept and pushed to GitHub. This handles all conflict types: `UU` (both modified), `DU` (GitHub deleted, you modified), `UD` (GitHub modified, you deleted), etc. The file list refreshes automatically.
+- **No** — your local changes are discarded; the editor reloads the GitHub version from disk and the file list refreshes automatically.
+
+Multiple rapid CRUD actions are serialised: at most one git chain runs at a time, with one queued follow-up that captures everything that accumulated while the first chain was in flight.
 
 Set `repo = ''` to disable all git operations.
 

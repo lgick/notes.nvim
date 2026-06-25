@@ -107,11 +107,40 @@ All git commands run via `vim.system` (non-blocking). Callbacks are always wrapp
 
 Key design decision: **no explicit branch in pull/push**. Using `git pull --rebase --autostash` and `git push` (without `origin <branch>`) relies on the upstream tracking ref that `git clone` sets automatically. This avoids breakage when the user's `init.defaultBranch` differs from the hardcoded branch name. `--autostash` keeps the pull from failing when the working tree has uncommitted changes (it stashes them before the rebase and re-applies after).
 
-`sync_on_exit()` is called from: `notes.close()` (on `<C-[>`), the `BufWritePost` autocmd (on `:w`), and immediately after each CRUD action (create, delete, rename). Flow:
-1. `git status --porcelain` → if empty stdout, fall through to the unpushed-commits check.
-2. `git add -A`
-3. `git commit -m "notes: YYYY-MM-DD HH:MM"`
-4. `git push`
+`sync_on_exit()` is called from: `notes.close()` (on `<C-[>`), the `BufWritePost` autocmd (on `:w`), and immediately after each CRUD action (create, delete, rename).
+
+**Concurrency guard:** two module-level booleans `syncing` / `sync_pending` serialise concurrent calls. If a second call arrives while a chain is in flight, it sets `sync_pending = true` and returns. `finish()` (called at every terminal point of the chain) clears `syncing` and, if `sync_pending` is set, immediately starts one more run — collapsing any number of queued calls into a single follow-up sync. If no follow-up is pending and notes is open, `finish()` calls `picker.refresh()` so any files added or deleted by the pull are immediately reflected in the list.
+
+**Flow when uncommitted changes exist (`git status --porcelain` non-empty):**
+
+```
+git fetch origin
+  └─ remote ahead of HEAD? (git rev-list HEAD..FETCH_HEAD --count)
+       No  → git add -A → git commit → git push
+       Yes → git stash push --include-untracked
+               └─ git pull --ff-only
+                    Fail (histories diverged) → git pull --rebase --autostash → commit → push
+                                                                                 Fail → ERROR, abort
+                    OK, nothing was stashed   → commit → push
+                    OK, stash exists          → git stash pop
+                                                   OK       → commit → push
+                                                   Conflict → git status --porcelain (collect XY + filename per conflict)
+                                                                └─ confirm dialog:
+                                                                     Yes → resolve per conflict type:
+                                                                             UD/DD (local deleted) → git rm --force (stage deletion)
+                                                                             other XY              → git checkout --theirs (restore local)
+                                                                           → stash drop → commit → push
+                                                                     No  → git reset --hard HEAD + stash drop
+                                                                             → :edit! current_file (force-reload buffer from disk)
+                                                                             → abort (no commit/push)
+                                                                   No conflict markers but pop failed (e.g. untracked filename collision)
+                                                                     → stash drop → commit → push
+                                                (finish() calls picker.refresh() at all terminal points when notes is open)
+```
+
+Fetching **before** committing (not after a failed push) is the key invariant: the local working tree is still uncommitted when the stash/pull/pop runs, so if the pop produces a conflict the user sees a clean "GitHub updated X, push anyway?" dialog rather than a git rebase error.
+
+**Flow when working tree is clean but local commits exist:** `git rev-list @{u}..HEAD --count` → if non-zero (or no upstream), `git push`.
 
 Each step is guarded: if any step fails, a WARN/ERROR notification is shown and the chain stops.
 
@@ -180,4 +209,10 @@ nvim --headless --clean \
 - **`state.closing = true` guard** — `WinClosed` fires for every window when `tabclose` processes them. Without the guard, the scheduled `notes.close()` call would run for each window and recurse.
 - **`state.tab` self-heal in `is_open()`** — if the notes tab is closed externally (`:tabclose`), `state.tab` is stale. `is_open()` detects the invalid tabpage and wipes all state fields so old window IDs cannot cause false matches in the `WinClosed` autocmd on a subsequent open.
 - **`vim.schedule` in git callbacks** — `vim.system` callbacks run in a libuv thread. Any nvim API call from there must be deferred with `vim.schedule`.
-- **CRUD sync races** — `sync_on_exit()` is called immediately after each CRUD action. If the user rapidly creates/renames/deletes multiple files before the first push completes, git will report "nothing to commit" for the subsequent calls; this is harmless — each call does the status check and skips if clean.
+- **CRUD sync races** — `sync_on_exit()` is called immediately after each CRUD action. Rapid creates/renames/deletes are serialised by the `syncing`/`sync_pending` mutex: at most one git chain runs at a time, and at most one follow-up run is queued. All changes accumulated during the in-flight chain are captured by the single follow-up's `git add -A`.
+- **Fetch-before-commit invariant** — `sync_with_remote_then_commit()` always runs `git fetch origin` before `git add -A`. This is critical: if we committed first and then discovered the remote diverged, a `git pull --rebase` on top of the committed change would fail with a conflict. By fetching and reconciling (stash → pull → pop) while the working tree is still uncommitted, any conflict is a simple working-tree conflict that can be resolved with a Yes/No dialog.
+- **"No" discard must use `:edit!`, not `open_in_edit`** — after `git reset --hard HEAD`, the editor buffer still holds the old local content and is marked modified. `open_in_edit` writes a modified buffer before `:edit`, which would overwrite the just-reset disk file and undo the discard. The discard path therefore calls `nvim_win_call(edit_win, 'edit! <path>')` directly to force-reload without writing. The subsequent `finish()` call handles `picker.refresh()` universally — do not add a second explicit refresh in the "No" branch.
+- **`finish()` always refreshes the list** — `finish()` calls `picker.refresh()` at every terminal point of the sync chain (when no follow-up sync is pending and notes is open). This covers "Yes" conflict resolution, clean stash pop, no-remote-ahead paths, and the "No" discard path. Do not add explicit `picker.refresh()` calls inside the chain; let `finish()` handle it uniformly.
+- **`UD`/`DD` conflicts require `git rm`, not `checkout --theirs`** — for `UD` (GitHub modified, local deleted), stage 3 is absent in the merge index. Running `git checkout --theirs -- file` exits with code 1 ("does not have a theirs version") and leaves the conflict unresolved. `git add -A` then silently resolves it as "keep ours" (GitHub content), `git commit` reports "nothing to commit" (message goes to stdout not stderr), and the error surfaces as `git commit failed:` with an empty message. The fix is to use `git rm --force -- file` for `UD`/`DD` entries, which stages the deletion correctly.
+- **`do_commit_push` "nothing to commit" is a non-error** — if `git commit` exits non-zero but stdout/stderr contains "nothing to commit", the working tree was already in sync with HEAD. Treat it as success and proceed to `do_push()`. This can happen after untracked-file collision during stash pop (pop fails, stash dropped, `add -A` finds nothing).
+- **Always drop the stash in `handle_stash_conflict`** — if `git stash pop` fails but `git status --porcelain` shows no conflict markers (untracked filename collision: "A.txt already exists, no checkout"), the stash is not consumed. The `#conflicts == 0` branch must explicitly `git stash drop` before calling `do_commit_push`, otherwise stashes accumulate across sync calls.
