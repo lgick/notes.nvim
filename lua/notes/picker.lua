@@ -152,7 +152,7 @@ function M.render_folders()
   api.nvim_buf_clear_namespace(st.folders_buf, ns_folders, 0, -1)
   for i, f in ipairs(st.folders or {}) do
     local hl = f.folder == st.current_folder and 'NotesActive' or 'NotesDir'
-    api.nvim_buf_add_highlight(st.folders_buf, ns_folders, hl, i - 1, 0, -1)
+    api.nvim_buf_set_extmark(st.folders_buf, ns_folders, i - 1, 0, { line_hl_group = hl })
   end
 end
 
@@ -165,7 +165,7 @@ function M.highlight_active()
   if st.current_file then
     for i, it in ipairs(st.items or {}) do
       if it.file == st.current_file then
-        api.nvim_buf_add_highlight(st.list_buf, ns_active, 'NotesActive', i - 1, 0, -1)
+        api.nvim_buf_set_extmark(st.list_buf, ns_active, i - 1, 0, { line_hl_group = 'NotesActive' })
         break
       end
     end
@@ -194,9 +194,9 @@ function M.render_notes()
   api.nvim_buf_clear_namespace(st.list_buf, ns, 0, -1)
   if not empty then
     for i, it in ipairs(st.items) do
-      api.nvim_buf_add_highlight(st.list_buf, ns, 'NotesFile', i - 1, 0, -1)
       if it.file == st.cut then
-        api.nvim_buf_add_highlight(st.list_buf, ns, 'NotesCut', i - 1, 0, -1)
+        -- priority > NotesActive (0) so NotesCut is never hidden by the active-note highlight
+        api.nvim_buf_set_extmark(st.list_buf, ns, i - 1, 0, { line_hl_group = 'NotesCut', priority = 200 })
       end
     end
   end
@@ -206,6 +206,31 @@ function M.render_notes()
   end
 
   M.highlight_active()
+end
+
+-- Update the title of the currently open note in-memory from the buffer content
+-- (without a disk read), then re-render only the notes column. Called on every
+-- TextChanged/TextChangedI in the editor buffer so the list stays in sync while typing.
+function M.update_live_title(buf, file)
+  local lines = api.nvim_buf_get_lines(buf, 0, 50, false)
+  local title, empty = EMPTY_TITLE, true
+  for _, l in ipairs(lines) do
+    local t = vim.trim(l)
+    if t ~= '' then
+      title, empty = t, false
+      break
+    end
+  end
+  local st = state()
+  for _, tbl in ipairs({ st.notes_all, st.items }) do
+    for _, n in ipairs(tbl or {}) do
+      if n.file == file then
+        n.title = title
+        n.empty = empty
+      end
+    end
+  end
+  M.render_notes()
 end
 
 function M.populate()

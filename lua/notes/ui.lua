@@ -13,7 +13,7 @@ local function setup_highlights()
   api.nvim_set_hl(0, 'NotesDir', { default = true, link = 'Directory' })
   api.nvim_set_hl(0, 'NotesFile', { default = true, link = 'Normal' })
   api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'WarningMsg' })
-  api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'Visual' })
+  api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'CursorLine' })
 end
 
 -- Replace the editor with the placeholder scratch buffer (no file open).
@@ -71,6 +71,8 @@ function M.set_nav_keymaps(buf)
 
   -- single prefix + synchronous getcharstr: no timeoutlen delay.
   -- h/j/k/l move spatially between the three windows via wincmd.
+  -- Exception: k from the editor always goes to the notes column (not folders),
+  -- because wincmd k lands in whichever of the two top windows is above the cursor.
   local function nav()
     local ok, char = pcall(vim.fn.getcharstr)
     if not ok then
@@ -79,6 +81,12 @@ function M.set_nav_keymaps(buf)
     local key = vim.fn.keytrans(char):lower()
     if not key:match('^[hjkl]$') then
       return
+    end
+    if key == 'k' and api.nvim_get_current_win() == st.edit_win then
+      if st.list_win and api.nvim_win_is_valid(st.list_win) then
+        api.nvim_set_current_win(st.list_win)
+        return
+      end
     end
     vim.cmd('wincmd ' .. key)
   end
@@ -147,6 +155,8 @@ local function setup_autocmds(st)
       if not st.synced then
         return
       end
+      -- refresh immediately: mtime and title are already on disk after :w
+      require('notes.picker').refresh()
       if cfg().repo ~= '' then
         require('notes.git').sync_on_exit()
       end
@@ -260,7 +270,15 @@ function M.open_in_edit(path)
   vim.keymap.set('n', cfg().keys.close, function()
     require('notes').close_interactive()
   end, { buffer = buf, silent = true, desc = 'Notes: close' })
-  -- focus is NOT moved: opening a note leaves the cursor in the search/notes window
+
+  -- live title update: update the notes column while typing, without a disk read
+  api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
+    buffer = buf,
+    callback = function()
+      require('notes.picker').update_live_title(buf, path)
+    end,
+  })
+  -- focus is NOT moved: opening a note leaves the cursor in the notes/folders window
 end
 
 function M.close()
