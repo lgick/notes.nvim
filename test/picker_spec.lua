@@ -1,5 +1,6 @@
--- Headless picker tests: recursive scan, substring filter, and the
--- delete/rename-of-open-file fallback to the placeholder buffer.
+-- Headless picker tests for the two-pane (macOS Notes) model:
+-- folder/notes scan, title-from-first-line, empty-note rules, folder filter,
+-- create/move/rename/delete, and the delete-of-open-note placeholder fallback.
 --
 -- Run: nvim --headless -l test/picker_spec.lua
 
@@ -40,8 +41,28 @@ local function fresh_open(dir)
   notes.open()
 end
 
-local function list_lines()
-  return api.nvim_buf_get_lines(notes.state.list_buf, 0, -1, false)
+local function titles()
+  local out = {}
+  for _, it in ipairs(notes.state.items or {}) do
+    out[#out + 1] = it.title
+  end
+  return out
+end
+
+local function all_titles()
+  local out = {}
+  for _, n in ipairs(notes.state.notes_all or {}) do
+    out[#out + 1] = n.title
+  end
+  return out
+end
+
+local function folder_names()
+  local out = {}
+  for _, f in ipairs(notes.state.folders or {}) do
+    out[#out + 1] = f.name
+  end
+  return out
 end
 
 local function contains(tbl, val)
@@ -53,118 +74,197 @@ local function contains(tbl, val)
   return false
 end
 
--- ── scan + filter ────────────────────────────────────────────────────────────
+-- ── scan: folders, titles, empty pinned top ──────────────────────────────────
 do
-  io.write('scan + filter\n')
+  io.write('scan + titles\n')
   local dir = tmpdir()
-  writefile(dir .. '/a.txt', { 'alpha' })
-  writefile(dir .. '/work/b.md', { 'beta' })
-  writefile(dir .. '/work/deep/c.log', { 'gamma' })
+  writefile(dir .. '/n1', { 'alpha note', 'second line' })
+  writefile(dir .. '/n2', { '', '  beta note' }) -- title = first non-blank line
+  writefile(dir .. '/Work/n3', { 'gamma note' })
+  writefile(dir .. '/blank', {}) -- empty note
 
   fresh_open(dir)
-  local lines = list_lines()
-  check('scan finds root file', contains(lines, 'a.txt'))
-  check('scan recurses one level', contains(lines, 'work/b.md'))
-  check('scan recurses deep / any extension', contains(lines, 'work/deep/c.log'))
 
-  -- live filter via the input buffer
-  api.nvim_buf_set_lines(notes.state.input_buf, 0, -1, false, { 'work/deep' })
-  picker.filter('work/deep')
-  picker.render_list()
-  local f = list_lines()
-  check('filter narrows to match', contains(f, 'work/deep/c.log') and #f == 1, table.concat(f, '|'))
+  check('root folder named "Notes"', notes.state.folders[1].name == 'Notes')
+  check('folders include "Work"', contains(folder_names(), 'Work'))
+  check('title from first line', contains(all_titles(), 'alpha note'))
+  check('title skips blank lines', contains(all_titles(), 'beta note'))
+  check('nested note scanned', contains(all_titles(), 'gamma note'))
+  check('empty note titled "New Note"', contains(all_titles(), 'New Note'))
+  -- root view ("Notes") shows only root notes, not the nested one
+  check('root view excludes nested note', not contains(titles(), 'gamma note'))
+  check('empty note pinned to top', notes.state.items[1].empty == true, notes.state.items[1].title)
 
   notes.close()
 end
 
--- ── delete the open file → placeholder, no E211 ──────────────────────────────
+-- ── root view is root-only; folder filter narrows ────────────────────────────
 do
-  io.write('delete open file\n')
+  io.write('root view + folder filter\n')
   local dir = tmpdir()
-  writefile(dir .. '/only.txt', { 'the only note' })
+  writefile(dir .. '/root_note', { 'at root' })
+  writefile(dir .. '/Work/work_note', { 'in work' })
 
   fresh_open(dir)
-  -- select line 1 and open it in the editor
+  check('root view shows only root notes', #notes.state.items == 1 and notes.state.items[1].title == 'at root')
+
+  notes.state.current_folder = 'Work'
+  picker.filter()
+  check('folder filter narrows to one', #notes.state.items == 1 and notes.state.items[1].title == 'in work')
+
+  notes.close()
+end
+
+-- ── folders sorted by recency of their newest note ───────────────────────────
+do
+  io.write('folder recency sort\n')
+  local dir = tmpdir()
+  writefile(dir .. '/Old/o1', { 'old' })
+  writefile(dir .. '/Fresh/f1', { 'fresh' })
+  -- make Old stale, Fresh recent
+  fn.system({ 'touch', '-t', '202001010000', dir .. '/Old/o1' })
+  fn.system({ 'touch', dir .. '/Fresh/f1' })
+
+  fresh_open(dir)
+  local names = folder_names()
+  check('root "Notes" first', names[1] == 'Notes')
+  check('fresher folder before staler', names[2] == 'Fresh' and names[3] == 'Old', table.concat(names, ','))
+
+  notes.close()
+end
+
+-- ── notes row format: "dd.mm.yyyy - title" ───────────────────────────────────
+do
+  io.write('row format\n')
+  local dir = tmpdir()
+  writefile(dir .. '/n', { 'hello' })
+
+  fresh_open(dir)
+  local row = api.nvim_buf_get_lines(notes.state.list_buf, 0, -1, false)[1]
+  check('row uses " - " separator', row:match('^%d%d%.%d%d%.%d%d%d%d %- hello$') ~= nil, row)
+
+  notes.close()
+end
+
+-- ── create_folder writes .gitkeep ────────────────────────────────────────────
+do
+  io.write('create folder\n')
+  local dir = tmpdir()
+  writefile(dir .. '/a', { 'a' })
+
+  fresh_open(dir)
+  local orig = vim.ui.input
+  vim.ui.input = function(_, cb) cb('Personal') end
+  picker.create_folder()
+  vim.ui.input = orig
+
+  check('folder created on disk', fn.isdirectory(dir .. '/Personal') == 1)
+  check('.gitkeep written', fn.filereadable(dir .. '/Personal/.gitkeep') == 1)
+  check('folder appears in column', contains(folder_names(), 'Personal'))
+
+  notes.close()
+end
+
+-- ── create_note: only one empty note per folder ──────────────────────────────
+do
+  io.write('create note dedupe\n')
+  local dir = tmpdir()
+  fresh_open(dir)
+
+  notes.state.current_folder = nil -- "all" => create at root
+  picker.create_note()
+  local first = notes.state.current_file
+  picker.populate()
+  check('first note created', first ~= nil and fn.filereadable(first) == 1)
+
+  picker.create_note() -- should reuse the empty note, not create a second
+  check('second create reuses empty note', notes.state.current_file == first)
+  local n = 0
+  for name in vim.fs.dir(dir) do
+    if name:sub(1, 1) ~= '.' then n = n + 1 end
+  end
+  check('only one file on disk', n == 1, 'count=' .. n)
+
+  notes.close()
+end
+
+-- ── move note: cut + drop on a folder ────────────────────────────────────────
+do
+  io.write('move note\n')
+  local dir = tmpdir()
+  writefile(dir .. '/movable', { 'move me' })
+  fn.mkdir(dir .. '/Target', 'p')
+  fn.writefile({}, dir .. '/Target/.gitkeep')
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  local note = notes.state.items[1]
+  picker.cut_note()
+  check('cut marks the note', notes.state.cut == note.file)
+
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Target' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.folder_enter()
+
+  check('note moved into folder', fn.filereadable(dir .. '/Target/movable') == 1)
+  check('old path gone', fn.filereadable(dir .. '/movable') == 0)
+  check('cut cleared', notes.state.cut == nil)
+
+  notes.close()
+end
+
+-- ── rename folder (moves all its notes) ──────────────────────────────────────
+do
+  io.write('rename folder\n')
+  local dir = tmpdir()
+  writefile(dir .. '/Old/note', { 'content' })
+
+  fresh_open(dir)
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Old' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  local orig = vim.ui.input
+  vim.ui.input = function(_, cb) cb('New') end
+  picker.rename_folder()
+  vim.ui.input = orig
+
+  check('folder renamed on disk', fn.isdirectory(dir .. '/New') == 1 and fn.isdirectory(dir .. '/Old') == 0)
+  check('note moved with folder', fn.filereadable(dir .. '/New/note') == 1)
+
+  notes.close()
+end
+
+-- ── delete the open note → placeholder, no E211 ──────────────────────────────
+do
+  io.write('delete open note\n')
+  local dir = tmpdir()
+  writefile(dir .. '/only', { 'the only note' })
+
+  fresh_open(dir)
   api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
   picker.open_selected()
-  check('file is open in editor', notes.state.current_file == dir .. '/only.txt')
+  check('note is open in editor', notes.state.current_file == dir .. '/only')
 
-  -- force the delete confirm() to "Yes"
   local orig_confirm = vim.fn.confirm
   vim.fn.confirm = function() return 1 end
-  picker.delete()
+  picker.delete_note()
   vim.fn.confirm = orig_confirm
 
-  check('file removed from disk', fn.filereadable(dir .. '/only.txt') == 0)
+  check('note removed from disk', fn.filereadable(dir .. '/only') == 0)
   check('current_file cleared', notes.state.current_file == nil)
   local edit_lines = api.nvim_buf_get_lines(notes.state.edit_buf, 0, -1, false)
   check(
     'editor shows placeholder',
-    edit_lines[1] == 'Select a file above or create a new one (a).',
+    edit_lines[1] == 'Select a note or create a new one (a).',
     table.concat(edit_lines, '|')
   )
   check('editor buffer is scratch (no E211 backing file)', vim.bo[notes.state.edit_buf].buftype == 'nofile')
-  check('list shows (no matches)', list_lines()[1] == '(no matches)')
-
-  notes.close()
-end
-
--- ── deleting a non-open file leaves the editor alone ─────────────────────────
-do
-  io.write('delete non-open file keeps editor\n')
-  local dir = tmpdir()
-  writefile(dir .. '/open.txt', { 'open me' })
-  writefile(dir .. '/other.txt', { 'delete me' })
-
-  fresh_open(dir)
-  -- open open.txt
-  for i, l in ipairs(list_lines()) do
-    if l == 'open.txt' then
-      api.nvim_win_set_cursor(notes.state.list_win, { i, 0 })
-      break
-    end
-  end
-  picker.open_selected()
-  check('open.txt open', notes.state.current_file == dir .. '/open.txt')
-
-  -- select other.txt and delete it
-  for i, l in ipairs(list_lines()) do
-    if l == 'other.txt' then
-      api.nvim_win_set_cursor(notes.state.list_win, { i, 0 })
-      break
-    end
-  end
-  local orig_confirm = vim.fn.confirm
-  vim.fn.confirm = function() return 1 end
-  picker.delete()
-  vim.fn.confirm = orig_confirm
-
-  check('other.txt deleted', fn.filereadable(dir .. '/other.txt') == 0)
-  check('editor still on open.txt', notes.state.current_file == dir .. '/open.txt')
-
-  notes.close()
-end
-
--- ── rename the open file → editor follows, no stale buffer ───────────────────
-do
-  io.write('rename open file\n')
-  local dir = tmpdir()
-  writefile(dir .. '/foo.txt', { 'rename me' })
-
-  fresh_open(dir)
-  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
-  picker.open_selected()
-  local old_buf = notes.state.edit_buf
-  check('foo open', notes.state.current_file == dir .. '/foo.txt')
-
-  local orig_input = vim.ui.input
-  vim.ui.input = function(_, cb) cb('bar.txt') end
-  picker.rename()
-  vim.ui.input = orig_input
-
-  check('renamed on disk', fn.filereadable(dir .. '/bar.txt') == 1 and fn.filereadable(dir .. '/foo.txt') == 0)
-  check('editor follows to new path', notes.state.current_file == dir .. '/bar.txt')
-  check('stale old buffer wiped', not api.nvim_buf_is_valid(old_buf))
+  check('notes column shows empty marker', api.nvim_buf_get_lines(notes.state.list_buf, 0, -1, false)[1] == '(no notes)')
 
   notes.close()
 end

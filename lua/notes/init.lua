@@ -7,20 +7,20 @@ local api = vim.api
 M.config = {
   dir = vim.fn.expand('~/notes'), -- local notes directory (git worktree)
   repo = '', -- SSH remote, e.g. 'git@github.com:user/notes.git'
-  list_height = 20, -- height of the list window (content rows)
+  list_height = 20, -- height of the folders/notes row (content rows)
+  folders_width = 22, -- width of the folders column
   keys = {
-    open_file = '<CR>', -- search: jump to list; list: open selected file in editor
-    next = '<C-j>', -- move selection down + open file (from search)
-    prev = '<C-k>', -- move selection up + open file (from search)
-    create_file = 'a', -- create file or folder (trailing / = folder; no ext = .txt)
-    delete = 'd', -- delete file/folder
-    rename = 'r', -- rename / move file (accepts relative path)
+    open_file = '<CR>', -- folders: select folder / drop a moved note; notes: focus editor
+    create = 'a', -- folders: create a folder; notes: create a note (in the current folder)
+    delete = 'd', -- folders: delete the folder; notes: delete the note
+    rename = 'r', -- folders: rename the selected folder
+    move = 'x', -- notes: mark note for moving (drop it on a folder with <CR>)
     refresh = 'R', -- refresh the list
     open_github = 'O', -- open the notes repo in the browser
-    scroll_down = '<C-n>', -- search: move selection down + open; list: scroll editor down
-    scroll_up = '<C-p>', -- search: move selection up + open; list: scroll editor up
+    scroll_down = '<C-n>', -- notes: scroll the open note down
+    scroll_up = '<C-p>', -- notes: scroll the open note up
     close = '<C-[>', -- close notes (≡ <Esc> in terminal)
-    window_nav = '<C-w>', -- prefix: j → window down, k → up (search → list → editor)
+    window_nav = '<C-w>', -- prefix: h/j/k/l → move between windows (wincmd)
   },
 }
 
@@ -28,15 +28,18 @@ M.state = {
   synced = false, -- whether pull has run this session
   closing = false, -- re-entrancy guard
   tab = nil, -- tabpage handle for the notes tab
-  input_win = nil,
-  input_buf = nil,
-  list_win = nil,
+  folders_win = nil,
+  folders_buf = nil,
+  list_win = nil, -- notes column window
   list_buf = nil,
   edit_win = nil,
   edit_buf = nil,
   current_file = nil, -- path of the file currently open in the editor
-  all_items = nil, -- full scan: array of { file, rel, mtime }
-  items = nil, -- filtered array
+  current_folder = nil, -- selected folder name; nil = "Notes" (root notes)
+  cut = nil, -- path of the note marked for moving (set by `x`)
+  folders = nil, -- array of { name, folder }; folder nil = the virtual root "Notes" entry
+  notes_all = nil, -- full scan: array of { file, folder, title, mtime, empty }
+  items = nil, -- filtered notes for the current folder
 }
 
 function M.is_open()
@@ -47,18 +50,19 @@ function M.is_open()
     end
     -- tab was externally closed; wipe stale state so old window IDs can't trigger autocmds
     st.tab = nil
-    st.input_win = nil; st.input_buf = nil
+    st.folders_win = nil; st.folders_buf = nil
     st.list_win = nil; st.list_buf = nil
     st.edit_win = nil; st.edit_buf = nil
-    st.current_file = nil; st.items = nil; st.all_items = nil
+    st.current_file = nil; st.current_folder = nil; st.cut = nil
+    st.items = nil; st.notes_all = nil; st.folders = nil
   end
   return false
 end
 
 function M.open()
   if M.is_open() then
-    if M.state.input_win and api.nvim_win_is_valid(M.state.input_win) then
-      api.nvim_set_current_win(M.state.input_win)
+    if M.state.list_win and api.nvim_win_is_valid(M.state.list_win) then
+      api.nvim_set_current_win(M.state.list_win)
     end
     return
   end

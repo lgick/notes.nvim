@@ -1,4 +1,4 @@
--- Tab-based layout: three split windows stacked vertically (search + list + editor)
+-- Tab-based layout: search (top) + folders | notes (middle) + editor (bottom)
 
 local M = {}
 
@@ -13,7 +13,6 @@ local function setup_highlights()
   api.nvim_set_hl(0, 'NotesDir', { default = true, link = 'Directory' })
   api.nvim_set_hl(0, 'NotesFile', { default = true, link = 'Normal' })
   api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'WarningMsg' })
-  api.nvim_set_hl(0, 'NotesMatch', { default = true, link = 'Search' })
   api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'Visual' })
 end
 
@@ -32,7 +31,7 @@ function M.show_placeholder()
   vim.bo[buf].buftype = 'nofile'
   vim.bo[buf].bufhidden = 'wipe'
   api.nvim_buf_set_lines(buf, 0, -1, false, {
-    'Select a file above or create a new one (a).',
+    'Select a note or create a new one (a).',
   })
   api.nvim_win_set_buf(st.edit_win, buf)
   st.edit_buf = buf
@@ -54,7 +53,7 @@ function M.show_placeholder()
   end
 end
 
--- Scroll the open file from search/list: sends <C-e>/<C-y> inside edit_win
+-- Scroll the open file from search/notes: sends <C-e>/<C-y> inside edit_win
 function M.scroll_edit(delta)
   local st = require('notes').state
   if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
@@ -71,42 +70,21 @@ function M.set_nav_keymaps(buf)
   local keys = cfg().keys
 
   -- single prefix + synchronous getcharstr: no timeoutlen delay.
-  -- Ordered navigation only (search → list → editor); j down, k up; no skipping.
+  -- h/j/k/l move spatially between the three windows via wincmd.
   local function nav()
     local ok, char = pcall(vim.fn.getcharstr)
     if not ok then
       return
     end
     local key = vim.fn.keytrans(char):lower()
-    local delta = key == 'j' and 1 or key == 'k' and -1 or nil
-    if not delta then
+    if not key:match('^[hjkl]$') then
       return
     end
-
-    local order = { st.input_win, st.list_win, st.edit_win }
-    local cur = api.nvim_get_current_win()
-    local idx
-    for i, w in ipairs(order) do
-      if w == cur then
-        idx = i
-        break
-      end
-    end
-    if not idx then
-      return
-    end
-
-    local target = order[idx + delta]
-    if target and api.nvim_win_is_valid(target) then
-      api.nvim_set_current_win(target)
-      if target == st.input_win then
-        vim.cmd('startinsert')
-      end
-    end
+    vim.cmd('wincmd ' .. key)
   end
 
   vim.keymap.set({ 'n', 'i' }, keys.window_nav, function()
-    -- leave insert first so the prefix key is not typed into the buffer
+    -- leave insert first (editor may be in insert) so the prefix isn't typed
     if api.nvim_get_mode().mode:sub(1, 1) == 'i' then
       vim.cmd('stopinsert')
     end
@@ -124,7 +102,7 @@ local function setup_autocmds(st)
         return
       end
       local closed = tonumber(args.match)
-      if closed == st.input_win or closed == st.list_win or closed == st.edit_win then
+      if closed == st.folders_win or closed == st.list_win or closed == st.edit_win then
         vim.schedule(function()
           require('notes').close()
         end)
@@ -132,7 +110,7 @@ local function setup_autocmds(st)
     end,
   })
 
-  -- auto-open file when navigating the list window
+  -- auto-open note when navigating the notes column
   api.nvim_create_autocmd('CursorMoved', {
     group = group,
     buffer = st.list_buf,
@@ -144,15 +122,15 @@ local function setup_autocmds(st)
     end,
   })
 
-  -- live filter: update list on every keystroke in the search box
-  api.nvim_create_autocmd({ 'TextChangedI', 'TextChanged' }, {
+  -- switch the notes column when navigating the folders column
+  api.nvim_create_autocmd('CursorMoved', {
     group = group,
-    buffer = st.input_buf,
+    buffer = st.folders_buf,
     callback = function()
-      local picker = require('notes.picker')
-      local text = api.nvim_buf_get_lines(st.input_buf, 0, 1, false)[1] or ''
-      picker.filter(text)
-      picker.render_list()
+      if api.nvim_get_current_win() ~= st.folders_win then
+        return
+      end
+      require('notes.picker').select_folder()
     end,
   })
 
@@ -176,6 +154,15 @@ local function setup_autocmds(st)
   })
 end
 
+local function list_win_opts(win)
+  vim.wo[win].number = false
+  vim.wo[win].relativenumber = false
+  vim.wo[win].cursorline = true
+  vim.wo[win].signcolumn = 'no'
+  vim.wo[win].statuscolumn = ''
+  vim.wo[win].winfixheight = true
+end
+
 function M.open()
   local st = require('notes').state
 
@@ -187,64 +174,54 @@ function M.open()
   local base_win = api.nvim_get_current_win()
 
   -- wipe the empty buffer that tabnew created
-  local tabnew_buf = api.nvim_get_current_buf()
-  vim.bo[tabnew_buf].bufhidden = 'wipe'
+  vim.bo[api.nvim_get_current_buf()].bufhidden = 'wipe'
 
   -- editor: base window starts with the placeholder scratch buffer
   st.edit_win = base_win
   M.show_placeholder()
 
-  -- list: split above editor
+  -- notes column: full-width split above editor (split into two columns below)
   st.list_buf = api.nvim_create_buf(false, true)
   vim.bo[st.list_buf].buftype = 'nofile'
   vim.bo[st.list_buf].bufhidden = 'wipe'
   vim.bo[st.list_buf].swapfile = false
   vim.bo[st.list_buf].filetype = 'NotesList'
   vim.bo[st.list_buf].modifiable = false
-  st.list_win = api.nvim_open_win(st.list_buf, false, {
+  st.list_win = api.nvim_open_win(st.list_buf, true, {
     split = 'above',
     win = base_win,
     height = cfg().list_height,
   })
-  vim.wo[st.list_win].number = false
-  vim.wo[st.list_win].relativenumber = false
-  vim.wo[st.list_win].cursorline = true
-  vim.wo[st.list_win].signcolumn = 'no'
-  vim.wo[st.list_win].statuscolumn = ''
-  vim.wo[st.list_win].winfixheight = true
+  list_win_opts(st.list_win)
   vim.wo[st.list_win].statusline = ' Notes'
 
-  -- search: split above list
-  st.input_buf = api.nvim_create_buf(false, true)
-  vim.bo[st.input_buf].buftype = 'nofile'
-  vim.bo[st.input_buf].bufhidden = 'wipe'
-  vim.bo[st.input_buf].swapfile = false
-  vim.bo[st.input_buf].filetype = 'NotesSearch'
-  vim.b[st.input_buf].completion = false -- disable blink.cmp in search
-  vim.bo[st.input_buf].complete = '' -- disable native keyword completion
-  st.input_win = api.nvim_open_win(st.input_buf, true, {
-    split = 'above',
+  -- folders column: split off the left of the notes column
+  st.folders_buf = api.nvim_create_buf(false, true)
+  vim.bo[st.folders_buf].buftype = 'nofile'
+  vim.bo[st.folders_buf].bufhidden = 'wipe'
+  vim.bo[st.folders_buf].swapfile = false
+  vim.bo[st.folders_buf].filetype = 'NotesFolders'
+  vim.bo[st.folders_buf].modifiable = false
+  st.folders_win = api.nvim_open_win(st.folders_buf, false, {
+    split = 'left',
     win = st.list_win,
-    height = 1,
+    width = cfg().folders_width,
   })
-  vim.wo[st.input_win].number = false
-  vim.wo[st.input_win].relativenumber = false
-  vim.wo[st.input_win].cursorline = false
-  vim.wo[st.input_win].signcolumn = 'no'
-  vim.wo[st.input_win].statuscolumn = ''
-  vim.wo[st.input_win].winfixheight = true
-  vim.wo[st.input_win].statusline = ' Search'
+  list_win_opts(st.folders_win)
+  vim.wo[st.folders_win].winfixwidth = true
+  vim.wo[st.folders_win].statusline = ' Folders'
 
   local picker = require('notes.picker')
-  picker.attach_input(st.input_buf)
-  picker.attach_list(st.list_buf)
-  M.set_nav_keymaps(st.input_buf)
+  picker.attach_folders(st.folders_buf)
+  picker.attach_notes(st.list_buf)
+  M.set_nav_keymaps(st.folders_buf)
   M.set_nav_keymaps(st.list_buf)
   M.set_nav_keymaps(st.edit_buf)
 
   setup_autocmds(st)
 
-  vim.cmd('startinsert')
+  -- focus the notes column (no search box to enter)
+  api.nvim_set_current_win(st.list_win)
 end
 
 function M.open_in_edit(path)
@@ -269,6 +246,8 @@ function M.open_in_edit(path)
   local buf = api.nvim_win_get_buf(st.edit_win)
   st.edit_buf = buf
   st.current_file = path
+  -- notes are ID-named (no extension); markdown gives sensible editing/highlighting
+  vim.bo[buf].filetype = 'markdown'
 
   -- set window options like a normal file; do NOT pin StatusLine/CursorLineNr in
   -- winhighlight — the user's global UpdateInsertModeColor (InsertEnter/Leave) must work
@@ -281,7 +260,7 @@ function M.open_in_edit(path)
   vim.keymap.set('n', cfg().keys.close, function()
     require('notes').close_interactive()
   end, { buffer = buf, silent = true, desc = 'Notes: close' })
-  -- focus is NOT moved: opening a file leaves the cursor in the search/list window
+  -- focus is NOT moved: opening a note leaves the cursor in the search/notes window
 end
 
 function M.close()
@@ -294,15 +273,18 @@ function M.close()
 
   local tab = st.tab
   st.tab = nil
-  st.input_win = nil
-  st.input_buf = nil
+  st.folders_win = nil
+  st.folders_buf = nil
   st.list_win = nil
   st.list_buf = nil
   st.edit_win = nil
   st.edit_buf = nil
   st.current_file = nil
+  st.current_folder = nil
+  st.cut = nil
   st.items = nil
-  st.all_items = nil
+  st.notes_all = nil
+  st.folders = nil
 
   if tab and api.nvim_tabpage_is_valid(tab) then
     pcall(vim.cmd, 'tabclose ' .. api.nvim_tabpage_get_number(tab))
