@@ -41,6 +41,7 @@ function M.show_placeholder()
   vim.wo[st.edit_win].relativenumber = false
   vim.wo[st.edit_win].cursorline = false
   vim.wo[st.edit_win].signcolumn = 'no'
+  vim.wo[st.edit_win].statusline = ' Editor'
 
   M.set_nav_keymaps(buf)
   vim.keymap.set('n', cfg().keys.close, function()
@@ -167,7 +168,7 @@ end
 local function list_win_opts(win)
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false
-  vim.wo[win].cursorline = true
+  vim.wo[win].cursorline = false
   vim.wo[win].signcolumn = 'no'
   vim.wo[win].statuscolumn = ''
   vim.wo[win].winfixheight = true
@@ -265,6 +266,7 @@ function M.open_in_edit(path)
   vim.wo[st.edit_win].relativenumber = true
   vim.wo[st.edit_win].cursorline = true
   vim.wo[st.edit_win].signcolumn = 'yes'
+  vim.wo[st.edit_win].statusline = ' Editor'
 
   M.set_nav_keymaps(buf)
   vim.keymap.set('n', cfg().keys.close, function()

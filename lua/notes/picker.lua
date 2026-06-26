@@ -482,6 +482,8 @@ function M.attach_folders(buf)
     vim.keymap.set('n', lhs, rhs, { buffer = buf, nowait = true, silent = true, desc = desc })
   end
 
+  map('h', '<Nop>', 'Notes: no horizontal move')
+  map('l', '<Nop>', 'Notes: no horizontal move')
   map(keys.open_file, M.folder_enter, 'Notes: select folder / drop note')
   map(keys.create, M.create_folder, 'Notes: create folder')
   map(keys.rename, M.rename_folder, 'Notes: rename folder')
@@ -501,6 +503,8 @@ function M.attach_notes(buf)
     vim.keymap.set('n', lhs, rhs, { buffer = buf, nowait = true, silent = true, desc = desc })
   end
 
+  map('h', '<Nop>', 'Notes: no horizontal move')
+  map('l', '<Nop>', 'Notes: no horizontal move')
   map(keys.open_file, function()
     local st = state()
     if st.edit_win and api.nvim_win_is_valid(st.edit_win) then
