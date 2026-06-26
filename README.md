@@ -10,7 +10,7 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
  Work          │ 25.06.2026 - Project idea
  Personal      │ 24.06.2026 - Report
 ──────────────┴──────────────────────────────────
- [+]  utf-8  markdown  12:4                       ← statusline
+ Editor                                           ← statusline
  # Shopping list
 
  - [ ] Milk
@@ -20,11 +20,12 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 ## Features
 
 - **Two-pane, macOS-Notes-style UI** — opens in a new full-screen tab: **folders** (left column) and **notes** (right column) on top, the editor on the bottom. Closing notes closes the tab.
-- **Title from content** — a note has no manual filename. Its title is the **first non-blank line** of its text; an empty note is titled **"New Note"** and is always pinned to the top of the list. On disk each note is an opaque ID file (no extension), so editing a title never churns git history or collides. The notes column shows `dd.mm.yyyy - Title`, sorted by modification time (newest first).
+- **Title from content** — a note has no manual filename. Its title is the **first non-blank line** of its text; an empty note is titled **"New Note"** and is always pinned to the top of the list. On disk each note is an opaque ID file (no extension), so editing a title never churns git history or collides. The notes column shows `dd.mm.yyyy - Title`, sorted by modification time (newest first). **The title in the list updates live as you type**, without saving.
 - **Folders, one level deep** — the folders column lists **"Notes"** (the root: notes that have no folder) plus your folders, sorted so the folder with the most recently edited note comes first. Selecting a folder filters the notes column to it. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
-- **Move by cursor** — press `x` on a note to mark it (highlighted), then move the cursor onto a folder (or "Notes" for the root) in the folders column and press `<CR>` to drop it there.
-- **Native editing** — the editor window behaves like a normal `markdown` file window (`number`, `cursorline`, `signcolumn`, statusline), so global `InsertEnter`/`InsertLeave` styling and statusline plugins work inside it.
-- **Full management** — same keys in each column: `a` creates (a note in the notes column, a folder in the folders column), `d` deletes; notes also support move (`x`), folders also support rename (`r`); refresh (`R`). **Every create/delete/move/rename immediately commits and pushes to GitHub.**
+- **Move by cursor** — press `x` on a note to mark it (highlighted with the selection color), then navigate to a folder in the folders column and press `p` to drop it there.
+- **Native editing** — the editor window behaves like a normal `markdown` file window (`number`, `cursorline`, `signcolumn`), so global `InsertEnter`/`InsertLeave` styling and statusline plugins work inside it.
+- **Instant UI updates** — the note list updates immediately on `:w` (sort order, title); git sync runs in the background.
+- **Full management** — same keys in each column: `a` creates (a note in the notes column, a folder in the folders column), `d` deletes; notes also support move (`x` + `p`), folders also support rename (`r`); refresh (`R`). **Every create/delete/move/rename immediately commits and pushes to GitHub.**
 - **Configurable keymaps** — every action, the close key, and panel-focus keys are remappable via `config.keys`.
 - **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull --rebase --autostash`. On `:w`: commit+push. On any create/delete/move/rename: immediate commit+push. On close (`<C-[>`): commit+push of any remaining changes.
 - **Unsaved changes prompt** — pressing `<C-[>` when the editor has unsaved changes shows a **Save / Discard / Cancel** dialog instead of silently writing or discarding.
@@ -96,11 +97,12 @@ require('notes').setup({
 
   -- Keymaps (override individually; unset keys keep their defaults).
   keys = {
-    open_file   = '<CR>',  -- folders: select folder / drop a moved note; notes: focus editor
+    open_file   = '<CR>',  -- folders: focus the notes column; notes: focus the editor
     create      = 'a',     -- folders: create a folder; notes: create a note
     delete      = 'd',     -- folders: delete the folder; notes: delete the note (confirmation)
     rename      = 'r',     -- folders: rename the selected folder
-    move        = 'x',     -- notes: mark note for moving (drop on a folder with <CR>)
+    move        = 'x',     -- notes: mark note for moving
+    paste       = 'p',     -- folders: drop the marked note into the selected folder
     refresh     = 'R',     -- refresh the list
     open_github = 'O',     -- open the notes repository in the browser
     scroll_down = '<C-n>', -- notes: scroll the open note down
@@ -138,19 +140,20 @@ All keys are configurable via `config.keys` (see above).
 | `a` | Create a folder | folders |
 | `r` | Rename the selected folder | folders |
 | `d` | Delete the selected folder (confirmation) | folders |
-| `<CR>` | Select folder / drop a moved note here | folders |
+| `<CR>` | Focus the notes column | folders |
+| `p` | Drop the marked note into this folder | folders |
 | `j` / `k` | Move cursor + open note instantly | notes |
 | `<CR>` | Focus the editor window | notes |
 | `a` | Create a new note in the current folder (or root) | notes |
 | `d` | Delete the selected note (confirmation) | notes |
-| `x` | Mark the note for moving (drop on a folder with `<CR>`) | notes |
+| `x` | Mark the note for moving (then navigate to a folder and press `p`) | notes |
 | `<C-n>` / `<C-p>` | Scroll the open note down / up | notes |
 | `R` | Refresh the list | folders / notes |
 | `O` | Open the notes repository in the browser | folders / notes |
 | `<C-w>` then `h`/`j`/`k`/`l` | Move between windows | any |
 | `<C-[>` / `<Esc>` | Close notes (prompts if editor has unsaved changes) | any |
 
-Window navigation reads the direction key right after `<C-w>` (via `getcharstr`), so it is not affected by `timeoutlen`. It moves spatially between the three windows (`wincmd h/j/k/l`).
+Window navigation reads the direction key right after `<C-w>` (via `getcharstr`), so it is not affected by `timeoutlen`. It moves spatially between the three windows (`wincmd h/j/k/l`). Pressing `<C-w>k` from the editor always goes to the notes column (not folders).
 
 ### Highlight groups
 
@@ -159,15 +162,15 @@ Override these to customize colors (they link to sensible defaults):
 | Group | Default link | Applies to |
 |-------|--------------|------------|
 | `NotesDir` | `Directory` | folder rows |
-| `NotesFile` | `Normal` | note rows |
-| `NotesActive` | `Visual` | the currently open note / the selected folder |
-| `NotesCut` | `WarningMsg` | the note marked for moving (`x`) |
+| `NotesFile` | `Normal` | note rows (defined for overriding; not applied per-row by default) |
+| `NotesActive` | `CursorLine` | the currently open note / the selected folder |
+| `NotesCut` | `Visual` | the note marked for moving (`x`) |
 
-The current cursor position is shown by the window's `cursorline`; `NotesActive` is a separate highlight that marks the note currently open in the editor (stays visible when focus is elsewhere).
+`NotesActive` fills the full line width (via extmark `line_hl_group`) so it stays visible when focus is elsewhere. `NotesCut` has higher priority (200) than `NotesActive` (0), so it is never hidden by it. The folders and notes windows do not use `cursorline`; the terminal cursor shows the current position.
 
 ### Statusline plugins
 
-The folders and notes windows have `filetype` set to `NotesFolders` and `NotesList` respectively, with fixed per-window statuslines (` Folders`, ` Notes`). If you use a statusline plugin (lualine, etc.) that overrides per-window statuslines, add those filetypes to its exclusion list.
+All three windows use fixed per-window statuslines (` Folders`, ` Notes`, ` Editor`). If you use a statusline plugin (lualine, etc.) that overrides per-window statuslines, add the filetypes `NotesFolders` and `NotesList` to its exclusion list, and exclude the editor window by filetype (`markdown`) or by checking the buffer path.
 
 ### File structure
 
@@ -181,7 +184,7 @@ The folders and notes windows have `filetype` set to `NotesFolders` and `NotesLi
     .gitkeep
 ```
 
-Each note is an ID-named file; its title in the list is read from the first non-blank line of its content. The virtual "Notes" entry in the folders column is the repo root (notes with no folder). Folders are one level deep — in the folders column create them with `a`, rename with `r`, delete with `d`; move notes between folders with `x` + `<CR>`.
+Each note is an ID-named file; its title in the list is read from the first non-blank line of its content. The virtual "Notes" entry in the folders column is the repo root (notes with no folder). Folders are one level deep — create with `a`, rename with `r`, delete with `d`; move notes between folders with `x` (mark) then `p` (paste into the selected folder).
 
 ### Git sync behaviour
 
@@ -190,7 +193,7 @@ Each note is an ID-named file; its title in the list is read from the first non-
 | Every open | Restore tracked files deleted outside the plugin (`git checkout -- <deleted>`) |
 | First `:Notes` per session | `git clone` if missing, then `git pull --rebase --autostash` |
 | Subsequent `:Notes` | Restore only; no network call (already synced) |
-| Saving a file (`:w`) | Fetch → reconcile with remote → `git add -A` → `git commit` → `git push` |
+| Saving a file (`:w`) | UI refreshes instantly; then fetch → reconcile → `git add -A` → `git commit` → `git push` |
 | Create / delete / move / rename | Immediate fetch → reconcile → `git add -A` → `git commit` → `git push` |
 | Closing notes (`<C-[>`) | Optionally saves the open buffer, then fetch → reconcile → `git add -A` → `git commit` → `git push` |
 
