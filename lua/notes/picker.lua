@@ -165,7 +165,16 @@ function M.highlight_active()
   if st.current_file then
     for i, it in ipairs(st.items or {}) do
       if it.file == st.current_file then
-        api.nvim_buf_set_extmark(st.list_buf, ns_active, i - 1, 0, { line_hl_group = 'NotesActive' })
+        -- hl_group (same layer as NotesCut) so priority 0 reliably loses to NotesCut's 200.
+        -- line_hl_group is a separate rendering layer and would override hl_group regardless of priority.
+        local line = api.nvim_buf_get_lines(st.list_buf, i - 1, i, false)[1] or ''
+        api.nvim_buf_set_extmark(
+          st.list_buf,
+          ns_active,
+          i - 1,
+          0,
+          { end_col = #line, hl_group = 'NotesActive', priority = 0 }
+        )
         break
       end
     end
@@ -195,8 +204,14 @@ function M.render_notes()
   if not empty then
     for i, it in ipairs(st.items) do
       if it.file == st.cut then
-        -- priority > NotesActive (0) so NotesCut is never hidden by the active-note highlight
-        api.nvim_buf_set_extmark(st.list_buf, ns, i - 1, 0, { line_hl_group = 'NotesCut', priority = 200 })
+        -- hl_group over the text only (not full width); priority > NotesActive (0)
+        api.nvim_buf_set_extmark(
+          st.list_buf,
+          ns,
+          i - 1,
+          0,
+          { end_col = #lines[i], hl_group = 'NotesCut', priority = 200 }
+        )
       end
     end
   end
@@ -421,7 +436,7 @@ function M.delete_folder()
   sync()
 end
 
--- Mark the selected note for moving and hand focus to the folders column.
+-- Mark the selected note for moving; focus stays in the notes column.
 function M.cut_note()
   local it = selected_note()
   if not it then
@@ -430,10 +445,6 @@ function M.cut_note()
   state().cut = it.file
   M.render_notes()
   vim.notify('[notes.nvim] Navigate to a folder and press ' .. cfg().keys.paste)
-  local st = state()
-  if st.folders_win and api.nvim_win_is_valid(st.folders_win) then
-    api.nvim_set_current_win(st.folders_win)
-  end
 end
 
 -- <CR> in the folders column: focus the notes column.

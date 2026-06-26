@@ -266,7 +266,8 @@ function M.open_in_edit(path)
   vim.wo[st.edit_win].relativenumber = true
   vim.wo[st.edit_win].cursorline = true
   vim.wo[st.edit_win].signcolumn = 'yes'
-  vim.wo[st.edit_win].statusline = ' Editor'
+  -- %m shows [+] while the note has unsaved changes, nothing once written
+  vim.wo[st.edit_win].statusline = ' Editor %m'
 
   M.set_nav_keymaps(buf)
   vim.keymap.set('n', cfg().keys.close, function()
