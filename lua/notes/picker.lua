@@ -229,7 +229,14 @@ function M.delete()
 
   local choice = fn.confirm('Delete "' .. it.rel .. '"?', '&Yes\n&No', 2)
   if choice == 1 then
+    -- deleting the open file (or a folder containing it) orphans the editor buffer
+    local cur = state().current_file
+    local affects_open = cur
+      and (cur == it.file or cur:sub(1, #it.file + 1) == it.file .. '/')
     fn.delete(it.file, 'rf')
+    if affects_open then
+      require('notes.ui').show_placeholder()
+    end
     clear_input()
     M.populate()
     if cfg().repo ~= '' then
@@ -251,7 +258,17 @@ function M.rename()
     end
     local target = cfg().dir .. '/' .. input
     fn.mkdir(fn.fnamemodify(target, ':h'), 'p')
+    local was_open = state().current_file == it.file
     fn.rename(it.file, target)
+    if was_open then
+      -- the editor still points at the old path; reopen at the new one and
+      -- wipe the stale buffer so checktime can't raise E211
+      local old_buf = state().edit_buf
+      require('notes.ui').open_in_edit(target)
+      if old_buf and old_buf ~= state().edit_buf and api.nvim_buf_is_valid(old_buf) then
+        pcall(api.nvim_buf_delete, old_buf, { force = true })
+      end
+    end
     clear_input()
     M.populate()
     if cfg().repo ~= '' then

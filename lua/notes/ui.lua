@@ -17,6 +17,43 @@ local function setup_highlights()
   api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'Visual' })
 end
 
+-- Replace the editor with the placeholder scratch buffer (no file open).
+-- Used on first open and after the open file is deleted/its folder removed:
+-- the orphaned buffer must be wiped or checktime raises E211 ("no longer available").
+function M.show_placeholder()
+  local st = require('notes').state
+  if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
+    return
+  end
+
+  local old = api.nvim_win_get_buf(st.edit_win)
+
+  local buf = api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = 'nofile'
+  vim.bo[buf].bufhidden = 'wipe'
+  api.nvim_buf_set_lines(buf, 0, -1, false, {
+    'Select a file above or create a new one (a).',
+  })
+  api.nvim_win_set_buf(st.edit_win, buf)
+  st.edit_buf = buf
+  st.current_file = nil
+
+  vim.wo[st.edit_win].number = false
+  vim.wo[st.edit_win].relativenumber = false
+  vim.wo[st.edit_win].cursorline = false
+  vim.wo[st.edit_win].signcolumn = 'no'
+
+  M.set_nav_keymaps(buf)
+  vim.keymap.set('n', cfg().keys.close, function()
+    require('notes').close_interactive()
+  end, { buffer = buf, silent = true, desc = 'Notes: close' })
+
+  -- wipe the previous real-file buffer so its deleted backing file can't raise E211
+  if old ~= buf and api.nvim_buf_is_valid(old) and vim.bo[old].buftype == '' then
+    pcall(api.nvim_buf_delete, old, { force = true })
+  end
+end
+
 -- Scroll the open file from search/list: sends <C-e>/<C-y> inside edit_win
 function M.scroll_edit(delta)
   local st = require('notes').state
@@ -153,16 +190,9 @@ function M.open()
   local tabnew_buf = api.nvim_get_current_buf()
   vim.bo[tabnew_buf].bufhidden = 'wipe'
 
-  -- editor: place an initial scratch buffer in the base window
-  st.edit_buf = api.nvim_create_buf(false, true)
-  vim.bo[st.edit_buf].buftype = 'nofile'
-  vim.bo[st.edit_buf].bufhidden = 'wipe'
-  api.nvim_buf_set_lines(st.edit_buf, 0, -1, false, {
-    'Select a file above or create a new one (a).',
-  })
-  api.nvim_win_set_buf(base_win, st.edit_buf)
+  -- editor: base window starts with the placeholder scratch buffer
   st.edit_win = base_win
-  st.current_file = nil
+  M.show_placeholder()
 
   -- list: split above editor
   st.list_buf = api.nvim_create_buf(false, true)

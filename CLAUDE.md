@@ -13,7 +13,7 @@ notes.nvim/
       init.lua   — public API: setup(), open(), close(), close_interactive(), toggle(); config; state
       git.lua    — async git operations (clone, pull, commit, push) via vim.system
       picker.lua — flat list: scan, filter, render, CRUD actions, buffer-local keymaps
-      ui.lua     — three stacked split windows in a tab: open, close, open_in_edit, nav keymaps
+      ui.lua     — three stacked split windows in a tab: open, close, open_in_edit, show_placeholder, nav keymaps
   README.md
   CLAUDE.md
 ```
@@ -73,7 +73,7 @@ Defaults are merged with user opts via `vim.tbl_deep_extend` in `setup()` (deep 
 - `populate()` = `scan` + `filter('')` + `render_list`; `refresh()` (`R`) is the same but preserves the current search text. `populate` runs on open and after each git step; `refresh` re-reads the directory on demand.
 - **Selection = `list_win` cursor.** `selected()` reads `nvim_win_get_cursor(list_win)[1]` and indexes `state.items`. The list window's `cursorline` marks the cursor; `NotesActive` (separate namespace) marks the currently open file — they can differ when focus is in search or editor. `move(delta)` clamps and moves that cursor remotely.
 - `open_selected()` (`<CR>`) → `ui.open_in_edit(item.file)` + `highlight_active()`. Opens the file **without moving focus**. Also called from the `CursorMoved` autocmd when list_win has focus (auto-open on navigation).
-- CRUD actions, all relative to `config.dir`: `create_file()` (`a`) is the single create entry — it prompts with a `default` of the first free `new.txt`/`new1.txt`/… and accepts a **relative path**; a trailing `/` makes it a folder (`mkdir -p`), otherwise a missing extension defaults to `.txt`, the parent is `mkdir -p`'d, an **existing file is not truncated** (just opened), and the new file is opened in the editor. `delete()` (`d`) confirms then `fn.delete(file, 'rf')`. `rename()` (`r`) prompts with `default = item.rel`; the new relative path can drop or change the folder, so it doubles as **move** (e.g. `work/todo.md` → `todo.md` moves to root). **Each CRUD action calls `git.sync_on_exit()` immediately after** — create, delete, and rename all trigger a commit+push without waiting for close.
+- CRUD actions, all relative to `config.dir`: `create_file()` (`a`) is the single create entry — it prompts with a `default` of the first free `new.txt`/`new1.txt`/… and accepts a **relative path**; a trailing `/` makes it a folder (`mkdir -p`), otherwise a missing extension defaults to `.txt`, the parent is `mkdir -p`'d, an **existing file is not truncated** (just opened), and the new file is opened in the editor. `delete()` (`d`) confirms then `fn.delete(file, 'rf')`; if the deleted path is the open file (or a folder containing it) it calls `ui.show_placeholder()` so the editor falls back to the placeholder instead of holding an orphaned buffer (which would raise `E211`). `rename()` (`r`) prompts with `default = item.rel`; the new relative path can drop or change the folder, so it doubles as **move** (e.g. `work/todo.md` → `todo.md` moves to root); when the renamed item is the open file it re-opens the editor at the new path via `ui.open_in_edit` and force-wipes the stale old-path buffer. **Each CRUD action calls `git.sync_on_exit()` immediately after** — create, delete, and rename all trigger a commit+push without waiting for close.
 - `attach_input(buf)` — `{ 'i', 'n' }` keymaps: `next`/`prev`/`<Down>`/`<Up>` and `scroll_down`/`scroll_up` all call `move_and_open` (move list cursor + open selected file); `open_file` opens the selected file; `close` calls `close_interactive()`. `attach_list(buf)` — normal-mode keymaps for `open_file`, the CRUD actions, `scroll_down`/`scroll_up` (scroll editor), and `close`. The `window_nav` prefix is added separately by `ui.set_nav_keymaps` to all three buffers; the editor buffer also gets a normal-mode `close` map in `open_in_edit`.
 
 **Nesting:** files and folders may live at any depth — `scan` is recursive and the list shows full `folder/sub/name.ext` paths. Create/rename take a relative path, so there is no root-only restriction.
@@ -82,8 +82,9 @@ Defaults are merged with user opts via `vim.tbl_deep_extend` in `setup()` (deep 
 
 Three split windows stacked vertically inside a dedicated tab (`tabnew`): **search** (top, 1 content row, statusline shows ` Search`), **list** (middle, `config.list_height` rows, statusline shows ` Notes`), **editor** (bottom, remaining height, normal statusline showing file info). The search and list windows have `winfixheight = true` so the editor always takes the remaining space.
 
-- `open()` — `setup_highlights()` (defines `NotesDir`/`NotesFile`/`NotesCut`/`NotesMatch`/`NotesActive` with `default = true`), runs `tabnew`, places an initial scratch buffer in the base window (editor), then `split = 'above'` to create the list window, then another `split = 'above'` to create the search window above the list. Sets per-window options: `statusline = ' Notes'` / `' Search'` for list and search; `number`/`cursorline`/`signcolumn` for the editor are set in `open_in_edit`. Attaches `picker.attach_input`/`attach_list` and `set_nav_keymaps` to all three buffers, registers autocmds, and `startinsert` (focus the search box).
+- `open()` — `setup_highlights()` (defines `NotesDir`/`NotesFile`/`NotesCut`/`NotesMatch`/`NotesActive` with `default = true`), runs `tabnew`, then calls `show_placeholder()` to seat the placeholder scratch buffer in the base window (editor), then `split = 'above'` to create the list window, then another `split = 'above'` to create the search window above the list. Sets per-window options: `statusline = ' Notes'` / `' Search'` for list and search; `number`/`cursorline`/`signcolumn` for the editor are set in `open_in_edit`. Attaches `picker.attach_input`/`attach_list` and `set_nav_keymaps` to all three buffers, registers autocmds, and `startinsert` (focus the search box).
 - `open_in_edit(path)` — first **writes the current editor buffer if it's a modified real file** (`:silent write`), then `:edit`s the new file inside `edit_win` via `nvim_win_call`. The write is essential: without it, re-displaying a modified buffer (notably opening the same file again) fails with `E37: No write since last change`, and any unsaved edits would also be lost at `close()`. Then repoints `state.edit_buf`/`current_file` and sets the editor window options **like a normal file** (`number`, `relativenumber`, `cursorline`, `signcolumn=yes`). Does *not* pin `StatusLine`/`CursorLineNr` in `winhighlight`, so the user's global `UpdateInsertModeColor` (triggered on `InsertEnter`/`InsertLeave`) recolors the editor itself. Re-applies `set_nav_keymaps` + a normal-mode `close_interactive` map to the new buffer. It **does not move focus** — opening a file (`<CR>`) leaves the cursor in the search/list window.
+- `show_placeholder()` — seats a fresh `nofile`/`bufhidden=wipe` scratch buffer (single line `Select a file above or create a new one (a).`) in `edit_win`, resets `state.edit_buf` and `state.current_file = nil`, sets plain window options (no number/cursorline/signcolumn), and re-applies `set_nav_keymaps` + the normal-mode `close` map. Crucially it **force-wipes the previous real-file buffer** (only when its `buftype == ''`): without this, the just-deleted backing file makes `checktime` raise `E211: File … no longer available`. Called from `open()` for the initial empty editor and from `picker.delete()` when the deleted path is (or contains) the open file.
 - `scroll_edit(delta)` — scrolls `edit_win` by one line via `nvim_win_call` (`<C-e>` for `delta > 0`, `<C-y>` otherwise). Bound to `scroll_down`/`scroll_up` in the search and list buffers.
 - `close()` — sets `st.closing = true`, clears all state fields, then calls `tabclose <tabnr>` to close the entire tab. The `st.closing` guard in `WinClosed` prevents recursion when `tabclose` triggers that autocmd for each closing window.
 - `set_nav_keymaps(buf)` — adds the `window_nav` prefix (default `<C-w>`) in `n`+`i` modes; the handler `stopinsert`s, reads the next char via `getcharstr`, and moves **one window** along `{ input, list, edit }`: `j` down, `k` up (no skipping, no other keys), re-entering insert when it lands on the search window.
@@ -109,7 +110,7 @@ Key design decision: **no explicit branch in pull/push**. Using `git pull --reba
 
 `sync_on_exit()` is called from: `notes.close()` (on `<C-[>`), the `BufWritePost` autocmd (on `:w`), and immediately after each CRUD action (create, delete, rename).
 
-**Concurrency guard:** two module-level booleans `syncing` / `sync_pending` serialise concurrent calls. If a second call arrives while a chain is in flight, it sets `sync_pending = true` and returns. `finish()` (called at every terminal point of the chain) clears `syncing` and, if `sync_pending` is set, immediately starts one more run — collapsing any number of queued calls into a single follow-up sync. If no follow-up is pending and notes is open, `finish()` calls `picker.refresh()` so any files added or deleted by the pull are immediately reflected in the list.
+**Concurrency guard:** two module-level booleans `syncing` / `sync_pending` serialise concurrent calls. If a second call arrives while a chain is in flight, it sets `sync_pending = true` and returns. `finish()` (called at every terminal point of the chain) clears `syncing` and, if `sync_pending` is set, immediately starts one more run — collapsing any number of queued calls into a single follow-up sync. If no follow-up is pending and notes is open, `finish()` calls `picker.refresh()` so any files added or deleted by the pull are immediately reflected in the list. At true idle (no pending sync), `finish()` also fires the one-shot `M._on_idle` hook if set — an internal completion callback used only by the test suite to await the async chain; production never sets it.
 
 **Flow when uncommitted changes exist (`git status --porcelain` non-empty):**
 
@@ -119,10 +120,13 @@ git fetch origin
        No  → git add -A → git commit → git push
        Yes → git stash push --include-untracked
                └─ git pull --ff-only
-                    Fail (histories diverged) → git pull --rebase --autostash → commit → push
-                                                                                 Fail → ERROR, abort
-                    OK, nothing was stashed   → commit → push
-                    OK, stash exists          → git stash pop
+                    Fail (histories diverged) → git pull --rebase   (tree is clean: changes are stashed)
+                                                  Fail → git rebase --abort
+                                                           → restore stash (if any) → ERROR, abort
+                                                  OK   → pop_and_commit (below)
+                    OK                        → pop_and_commit:
+                                                   nothing was stashed → commit → push
+                                                   stash exists        → git stash pop
                                                    OK       → commit → push
                                                    Conflict → git status --porcelain (collect XY + filename per conflict)
                                                                 └─ confirm dialog:
@@ -140,9 +144,15 @@ git fetch origin
 
 Fetching **before** committing (not after a failed push) is the key invariant: the local working tree is still uncommitted when the stash/pull/pop runs, so if the pop produces a conflict the user sees a clean "GitHub updated X, push anyway?" dialog rather than a git rebase error.
 
-**Flow when working tree is clean but local commits exist:** `git rev-list @{u}..HEAD --count` → if non-zero (or no upstream), `git push`.
+**Diverged history + uncommitted changes (`pull --ff-only` fails):** after the manual `stash push` the working tree is clean, so the diverged case runs plain `git pull --rebase` (rebases local commits onto the remote) and then the shared `pop_and_commit` helper (`stash pop` → `do_commit_push`, or `handle_stash_conflict` on a pop conflict). If the rebase itself conflicts (committed histories touch the same lines), it runs `git rebase --abort` to leave a clean tree, restores the stash, and reports — it never leaves the repo mid-rebase. This unifies the stashed and nothing-stashed diverged cases; there is no longer a dead-end "could not merge" abort that left sync permanently stuck.
+
+**Flow when working tree is clean but local commits exist:** `git rev-list @{u}..HEAD --count` → if non-zero (or no upstream), `do_push`.
+
+**Self-healing push (`do_push`):** on success it notifies and finishes. On a rejected push whose stderr matches `fetch first` / `non-fast-forward` / `rejected` (the remote advanced after our last fetch), it runs `git pull --rebase --autostash` and retries the push **once**, guarded by a per-chain `pushed_retry` boolean so it can never loop. If that rebase conflicts it runs `git rebase --abort` and reports. This safety net covers every push path — notably the clean-tree local-ahead case, which pushes without a prior fetch.
 
 Each step is guarded: if any step fails, a WARN/ERROR notification is shown and the chain stops.
+
+`pull()` (on open) runs `git pull --rebase --autostash`. If it fails — typically a rebase conflict between a local unpushed commit and the remote — it runs `git rebase --abort` before the WARN, so the working tree is never left mid-rebase for the next `sync_on_exit` to commit on top of.
 
 `restore()` runs on **every** open (before pull), independent of `repo`. It runs `git ls-files --deleted -z` and, for any tracked file missing from the working tree, `git checkout -- <files>` to bring it back from the last commit. Rationale: the plugin commits all of its own edits, so an uncommitted *deletion* at open time is accidental (e.g. `rm` in the shell) and must not propagate to the remote on the next push. Only deletions are restored — modified-but-uncommitted tracked files are left alone so real edits survive. `-z` avoids path quoting so Cyrillic/space filenames work.
 
@@ -178,7 +188,16 @@ require('notes').setup({
 
 ## Testing
 
-The plugin has no automated test suite. Verification is done manually or with headless nvim:
+Automated suite lives in `test/` and needs only `git` + `nvim` on `PATH`:
+
+```bash
+bash test/run.sh        # picker spec + git-sync spec; exits non-zero on any failure
+```
+
+- `test/picker_spec.lua` — headless, synchronous: recursive `scan`, substring `filter`, and the delete/rename-of-open-file fallback to the placeholder (asserts no `E211`, `current_file` cleared, stale buffer wiped). Run alone: `nvim --headless -l test/picker_spec.lua`.
+- `test/sync_spec.sh` + `test/sync_driver.lua` — builds a bare `remote.git` plus two clones (`A` = the plugin's dir, `B` = a second machine) and drives `sync_on_exit` / `pull` / `restore` on `A` through the driver, which arms `git._on_idle` (or a pull/restore callback) and `vim.wait`s for the async chain to settle. Covers S1–S8: remote-add, same-file conflict (Yes/No), different-file auto-merge, remote-delete, diverged-history rebase-after-stash, clean local-ahead push-reject retry, accidental-rm restore, and pull-rebase-conflict abort. Dialogs are made deterministic by monkeypatching `vim.fn.confirm` (`NOTES_CONFIRM`).
+
+Manual / ad-hoc headless checks:
 
 ```bash
 # module load smoke test
