@@ -12,7 +12,7 @@ end
 local function setup_highlights()
   api.nvim_set_hl(0, 'NotesDir', { default = true, link = 'Directory' })
   api.nvim_set_hl(0, 'NotesFile', { default = true, link = 'Normal' })
-  api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'WarningMsg' })
+  api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'Visual' })
   api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'CursorLine' })
 end
 

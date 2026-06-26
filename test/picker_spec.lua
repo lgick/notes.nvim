@@ -207,7 +207,7 @@ do
       api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
     end
   end
-  picker.folder_enter()
+  picker.paste_note()
 
   check('note moved into folder', fn.filereadable(dir .. '/Target/movable') == 1)
   check('old path gone', fn.filereadable(dir .. '/movable') == 0)

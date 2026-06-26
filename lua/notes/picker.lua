@@ -421,8 +421,7 @@ function M.delete_folder()
   sync()
 end
 
--- Mark the selected note for moving and hand focus to the folders column;
--- the next <CR> there drops it into the chosen folder.
+-- Mark the selected note for moving and hand focus to the folders column.
 function M.cut_note()
   local it = selected_note()
   if not it then
@@ -430,20 +429,25 @@ function M.cut_note()
   end
   state().cut = it.file
   M.render_notes()
-  vim.notify('[notes.nvim] Pick a folder and press <CR>')
+  vim.notify('[notes.nvim] Navigate to a folder and press ' .. cfg().keys.paste)
   local st = state()
   if st.folders_win and api.nvim_win_is_valid(st.folders_win) then
     api.nvim_set_current_win(st.folders_win)
   end
 end
 
--- <CR> in the folders column: drop a marked note, otherwise jump to the notes column.
+-- <CR> in the folders column: focus the notes column.
 function M.folder_enter()
   local st = state()
+  if st.list_win and api.nvim_win_is_valid(st.list_win) then
+    api.nvim_set_current_win(st.list_win)
+  end
+end
+
+-- p in the folders column: drop the marked note into the selected folder.
+function M.paste_note()
+  local st = state()
   if not st.cut then
-    if st.list_win and api.nvim_win_is_valid(st.list_win) then
-      api.nvim_set_current_win(st.list_win)
-    end
     return
   end
 
@@ -484,7 +488,8 @@ function M.attach_folders(buf)
 
   map('h', '<Nop>', 'Notes: no horizontal move')
   map('l', '<Nop>', 'Notes: no horizontal move')
-  map(keys.open_file, M.folder_enter, 'Notes: select folder / drop note')
+  map(keys.open_file, M.folder_enter, 'Notes: focus notes column')
+  map(keys.paste, M.paste_note, 'Notes: paste note into folder')
   map(keys.create, M.create_folder, 'Notes: create folder')
   map(keys.rename, M.rename_folder, 'Notes: rename folder')
   map(keys.delete, M.delete_folder, 'Notes: delete folder')
