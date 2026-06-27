@@ -14,6 +14,17 @@ local function setup_highlights()
   api.nvim_set_hl(0, 'NotesFile', { default = true, link = 'Normal' })
   api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'Visual' })
   api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'CursorLine' })
+  -- NotesDirActive: Directory fg (blue) on CursorLine bg — for the selected folder row.
+  -- No standard group combines both, so we compute it from the resolved colors.
+  local dir = api.nvim_get_hl(0, { name = 'Directory', link = false })
+  local cursor = api.nvim_get_hl(0, { name = 'CursorLine', link = false })
+  api.nvim_set_hl(0, 'NotesDirActive', {
+    fg = dir.fg,
+    bg = cursor.bg,
+    bold = dir.bold or false,
+    ctermfg = dir.ctermfg,
+    ctermbg = cursor.ctermbg,
+  })
 end
 
 -- Replace the editor with the placeholder scratch buffer (no file open).

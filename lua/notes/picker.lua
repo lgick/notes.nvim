@@ -151,7 +151,7 @@ function M.render_folders()
 
   api.nvim_buf_clear_namespace(st.folders_buf, ns_folders, 0, -1)
   for i, f in ipairs(st.folders or {}) do
-    local hl = f.folder == st.current_folder and 'NotesActive' or 'NotesDir'
+    local hl = f.folder == st.current_folder and 'NotesDirActive' or 'NotesDir'
     api.nvim_buf_set_extmark(st.folders_buf, ns_folders, i - 1, 0, { line_hl_group = hl })
   end
 end
