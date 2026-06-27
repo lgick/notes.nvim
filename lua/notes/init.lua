@@ -5,7 +5,7 @@ local M = {}
 local api = vim.api
 
 M.config = {
-  dir = vim.fn.expand('~/notes'), -- local notes directory (git worktree)
+  dir = vim.fn.expand('~/.notes'), -- local notes directory (git worktree)
   repo = '', -- SSH remote, e.g. 'git@github.com:user/notes.git'
   list_height = 20, -- height of the folders/notes row (content rows)
   folders_width = 22, -- width of the folders column

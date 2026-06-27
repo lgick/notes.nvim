@@ -47,7 +47,7 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 vim.pack.add({ src = 'https://github.com/lgick/notes.nvim' })
 
 require('notes').setup({
-  dir  = vim.fn.expand('~/notes'),
+  dir  = vim.fn.expand('~/.notes'),
   repo = 'git@github.com:youruser/notes.git',
 })
 ```
@@ -58,7 +58,7 @@ require('notes').setup({
 {
   'lgick/notes.nvim',
   opts = {
-    dir  = vim.fn.expand('~/notes'),
+    dir  = vim.fn.expand('~/.notes'),
     repo = 'git@github.com:youruser/notes.git',
   },
 }
@@ -71,7 +71,7 @@ use {
   'lgick/notes.nvim',
   config = function()
     require('notes').setup({
-      dir  = vim.fn.expand('~/notes'),
+      dir  = vim.fn.expand('~/.notes'),
       repo = 'git@github.com:youruser/notes.git',
     })
   end,
@@ -83,7 +83,7 @@ use {
 ```lua
 require('notes').setup({
   -- Local directory where notes are stored (also the git worktree root).
-  dir = vim.fn.expand('~/notes'),
+  dir = vim.fn.expand('~/.notes'),
 
   -- SSH remote for GitHub sync.
   -- Leave empty ('') to use notes locally without any git sync.
@@ -175,7 +175,7 @@ All three windows use fixed per-window statuslines (` Folders`, ` Notes`, ` Edit
 ### File structure
 
 ```
-~/notes/             ← config.dir
+~/.notes/             ← config.dir
   20260626223010     ← a note: opaque ID file, no extension; title = first line
   Work/              ← a folder (one level deep)
     20260625101500   ← a note inside the folder
