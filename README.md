@@ -1,5 +1,7 @@
 # notes.nvim
 
+*[Русская версия](README.ru.md)*
+
 A lightweight Neovim plugin for managing notes in a dedicated tab — modelled on the
 **macOS Notes** app — with optional GitHub synchronization via Git (SSH).
 
@@ -27,8 +29,8 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 - **Instant UI updates** — the note list updates immediately on `:w` (sort order, title); git sync runs in the background.
 - **Full management** — same keys in each column: `a` creates (a note in the notes column, a folder in the folders column), `d` deletes; notes also support move (`x` + `p`), folders also support rename (`r`); refresh (`R`). **Every create/delete/move/rename immediately commits and pushes to GitHub.**
 - **Configurable keymaps** — every action, the close key, and panel-focus keys are remappable via `config.keys`.
-- **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull --rebase --autostash`. On `:w`: commit+push. On any create/delete/move/rename: immediate commit+push. On close (`<C-[>`): commit+push of any remaining changes.
-- **Unsaved changes prompt** — pressing `<C-[>` when the editor has unsaved changes shows a **Save / Discard / Cancel** dialog instead of silently writing or discarding.
+- **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull --rebase --autostash`. On `:w`: commit+push. On any create/delete/move/rename: immediate commit+push. On close (`q`): commit+push of any remaining changes.
+- **Unsaved changes prompt** — pressing `q` when the editor has unsaved changes shows a **Save / Discard / Cancel** dialog instead of silently writing or discarding. Choosing **Discard** reloads the saved version from disk.
 - **Crash-safe** — on every open, tracked files deleted outside the plugin (e.g. an accidental `rm`) are restored from the last commit before anything is pushed, so an empty working tree never propagates to the remote.
 - **No external dependencies** — pure Lua, no third-party plugins required.
 - **Works from any directory** — open your notes regardless of the current working directory.
@@ -195,7 +197,7 @@ Each note is an ID-named `.md` file; its title in the list is read from the firs
 | Subsequent `:Notes` | Restore only; no network call (already synced) |
 | Saving a file (`:w`) | UI refreshes instantly; then fetch → reconcile → `git add -A` → `git commit` → `git push` |
 | Create / delete / move / rename | Immediate fetch → reconcile → `git add -A` → `git commit` → `git push` |
-| Closing notes (`<C-[>`) | Optionally saves the open buffer, then fetch → reconcile → `git add -A` → `git commit` → `git push` |
+| Closing notes (`q`) | Optionally saves the open buffer, then fetch → reconcile → `git add -A` → `git commit` → `git push` |
 
 **Reconcile** means: if the remote is ahead, `git stash push` → `git pull --ff-only` → `git stash pop`. If the pop produces a conflict, a dialog appears:
 

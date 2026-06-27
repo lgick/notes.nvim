@@ -134,6 +134,12 @@ function M.close_interactive()
         api.nvim_buf_call(buf, function()
           vim.cmd('silent write')
         end)
+      elseif choice == 2 then
+        -- reload from disk so the discarded edits don't linger in the hidden
+        -- buffer and reappear when the same note is reopened
+        api.nvim_buf_call(buf, function()
+          vim.cmd('silent edit!')
+        end)
       end
     end
   end

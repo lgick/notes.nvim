@@ -119,6 +119,14 @@ function M.pull(cb)
 end
 
 -- git@github.com:user/repo.git / ssh://git@host/… / https://…  →  https://host/user/repo
+function M.repo_url(repo)
+  local url = repo
+    :gsub('^git@([^:]+):', 'https://%1/')
+    :gsub('^ssh://git@', 'https://')
+    :gsub('%.git$', '')
+  return url
+end
+
 function M.open_github()
   local repo = cfg().repo
   if repo == '' then
@@ -126,10 +134,7 @@ function M.open_github()
     return
   end
 
-  local url =
-    repo:gsub('^git@([^:]+):', 'https://%1/'):gsub('^ssh://git@', 'https://'):gsub('%.git$', '')
-
-  vim.ui.open(url)
+  vim.ui.open(M.repo_url(repo))
 end
 
 -- Serialise concurrent calls: if a sync is already running, set pending and

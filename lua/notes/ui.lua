@@ -8,6 +8,10 @@ local fn = vim.fn
 -- saved value of `tabline` before we override it; nil means we didn't override
 local _old_tabline = nil
 
+-- live-title autocmd group; cleared per editor buffer so revisiting a note does
+-- not stack duplicate TextChanged handlers
+local live_title_group = api.nvim_create_augroup('NotesEditLiveTitle', { clear = true })
+
 local function cfg()
   return require('notes').config
 end
@@ -332,8 +336,12 @@ function M.open_in_edit(path)
     require('notes').close_interactive()
   end, { buffer = buf, silent = true, desc = 'Notes: close' })
 
-  -- live title update: update the notes column while typing, without a disk read
+  -- live title update: update the notes column while typing, without a disk read.
+  -- clear any previous handler on this buffer first so revisiting a note does not
+  -- stack duplicate autocmds (each would re-run update_live_title per keystroke)
+  api.nvim_clear_autocmds({ group = live_title_group, buffer = buf })
   api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
+    group = live_title_group,
     buffer = buf,
     callback = function()
       require('notes.picker').update_live_title(buf, path)

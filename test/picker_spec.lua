@@ -408,6 +408,81 @@ do
   notes.close()
 end
 
+-- ── close_interactive Discard reloads from disk (no lingering edits) ──────────
+do
+  io.write('discard reloads from disk\n')
+  local dir = tmpdir()
+  writefile(dir .. '/note', { 'saved content' })
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.open_selected()
+  local buf = notes.state.edit_buf
+  api.nvim_buf_set_lines(buf, 0, -1, false, { 'unsaved edit' }) -- modify without saving
+  check('buffer marked modified', vim.bo[buf].modified == true)
+
+  local orig_confirm = vim.fn.confirm
+  vim.fn.confirm = function() return 2 end -- Discard
+  notes.close_interactive()
+  vim.fn.confirm = orig_confirm
+
+  check('disk content untouched', table.concat(fn.readfile(dir .. '/note'), '') == 'saved content')
+
+  -- reopen: the discarded edit must not reappear from a lingering hidden buffer
+  notes.state.tab = nil
+  notes.open()
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.open_selected()
+  local buf2 = notes.state.edit_buf
+  local content = table.concat(api.nvim_buf_get_lines(buf2, 0, -1, false), '')
+  check('reopened note shows saved content', content == 'saved content', content)
+  check('reopened buffer not modified', vim.bo[buf2].modified == false)
+
+  notes.close()
+end
+
+-- ── revisiting a note does not stack duplicate live-title autocmds ────────────
+do
+  io.write('live-title autocmd dedupe\n')
+  local dir = tmpdir()
+  writefile(dir .. '/a', { 'note A' })
+  writefile(dir .. '/b', { 'note B' })
+
+  fresh_open(dir)
+  local ui = require('notes.ui')
+  for _ = 1, 4 do
+    ui.open_in_edit(dir .. '/a')
+    ui.open_in_edit(dir .. '/b')
+  end
+  ui.open_in_edit(dir .. '/a')
+
+  local cmds = api.nvim_get_autocmds({
+    event = { 'TextChanged', 'TextChangedI' },
+    buffer = notes.state.edit_buf,
+  })
+  check('exactly one handler per event after revisits', #cmds == 2, 'count=' .. #cmds)
+
+  notes.close()
+end
+
+-- ── git.repo_url: ssh/scp/https → browsable https URL ─────────────────────────
+do
+  io.write('repo_url conversion\n')
+  local git = require('notes.git')
+  check(
+    'scp-style git@host:user/repo.git',
+    git.repo_url('git@github.com:lgick/notes.git') == 'https://github.com/lgick/notes'
+  )
+  check(
+    'ssh://git@host/user/repo.git',
+    git.repo_url('ssh://git@github.com/lgick/notes.git') == 'https://github.com/lgick/notes'
+  )
+  check(
+    'https://host/user/repo.git',
+    git.repo_url('https://github.com/lgick/notes.git') == 'https://github.com/lgick/notes'
+  )
+end
+
 io.write('\n')
 if failures > 0 then
   io.write(failures .. ' check(s) FAILED\n')
