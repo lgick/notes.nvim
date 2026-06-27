@@ -1,5 +1,9 @@
 # notes.nvim — Developer Guide
 
+## Language
+
+Все ответы в Claude Code давать на **русском языке**.
+
 ## Project overview
 
 A self-contained Neovim plugin written in pure Lua. No external plugin dependencies. Requires Neovim ≥ 0.10.
@@ -21,10 +25,10 @@ notes.nvim/
 ## macOS-Notes model (high level)
 
 The plugin imitates the macOS Notes app:
-- **No manual filenames.** Each note is an opaque **ID file** (timestamp `%Y%m%d%H%M%S`, no
-  extension). Its **title is the first non-blank line** of its content; an empty note is titled
-  `New Note`. The ID never changes on edit, so titles never churn git history or collide.
-  The editor opens notes as `markdown`.
+- **No manual filenames.** Each note is an opaque **ID file** (timestamp `%Y%m%d%H%M%S.md`,
+  e.g. `20260627143000.md`). Its **title is the first non-blank line** of its content; an empty
+  note is titled `New Note`. The ID never changes on edit, so titles never churn git history or
+  collide. The editor opens notes as `markdown`.
 - **Two-pane list:** a **folders** column (left) and a **notes** column (right) on top, with the
   editor below. No search box.
 - **Folders are one level deep.** The folders column shows the virtual `Notes` (the **root**:
@@ -107,7 +111,7 @@ Defaults are merged with user opts via `vim.tbl_deep_extend` in `setup()` (deep 
 - `select_folder()` — folders-column cursor handler: sets `state.current_folder` to the row's folder and re-filters/re-renders the notes column.
 - `open_selected()` (`<CR>` in notes / CursorMoved) → `ui.open_in_edit(item.file)` + `highlight_active()`; **does not move focus**.
 - Actions (each calls `git.sync_on_exit()` after a change):
-  - `create_note()` (`a`, notes column) — target folder = `current_folder` (or root when `Notes` is selected). If that folder already holds an **empty** note, it is reopened instead of creating a second (one empty note per folder). Otherwise writes an empty **ID file** (`new_id` = `%Y%m%d%H%M%S` + collision counter, no extension) and opens it in the editor **without moving focus** (cursor stays in the notes column).
+  - `create_note()` (`a`, notes column) — target folder = `current_folder` (or root when `Notes` is selected). If that folder already holds an **empty** note, it is reopened instead of creating a second (one empty note per folder). Otherwise writes an empty **ID file** (`new_id` = `%Y%m%d%H%M%S.md` + collision suffix before the extension) and opens it in the editor **without moving focus** (cursor stays in the notes column).
   - `create_folder()` (`a`, folders column) — `vim.ui.input` name (rejects `/`: folders are one level), `mkdir -p`, writes a hidden `.gitkeep` so the empty folder can commit.
   - `rename_folder()` (`r`, folders column) — refuses the virtual root `Notes` row; `fn.rename`s the directory; if the open note is inside, reopens the editor at the new path and wipes the stale buffer; updates `current_folder` if it was the renamed one.
   - `delete_note()` (`d`, notes column) / `delete_folder()` (`d`, folders column) — `confirm`, then `fn.delete`; if the open note (or, for a folder, a note inside it) is removed, calls `ui.show_placeholder()` so the editor drops the orphaned buffer (avoids `E211`).
@@ -268,7 +272,7 @@ nvim --headless --clean \
 - **`update_live_title` reads the buffer, not the disk** — the `TextChanged`/`TextChangedI` autocmd registered in `open_in_edit` calls `picker.update_live_title(buf, file)`, which uses `nvim_buf_get_lines` to read the first 50 lines from the Neovim buffer object. This is fast (no I/O) and keeps the title column in sync while the user types. After `:w`, `BufWritePost` calls `picker.refresh()` (disk scan) which also picks up the new mtime for sort order.
 - **`<C-w>k` from editor goes to list_win, not wincmd k** — `wincmd k` moves to the window whose bottom border is nearest above, which is cursor-position-dependent and lands in the folders column when the cursor is on the left side of the wide editor window. The nav handler detects `key == 'k' and current_win == edit_win` and calls `nvim_set_current_win(list_win)` directly.
 - **`paste_note` is separate from `folder_enter`** — `folder_enter` (`<CR>`) only focuses the notes column; `paste_note` (`p`) does the actual file move. This avoids accidental drops when pressing `<CR>` to navigate without intending to paste. `cut_note` notifies the user with the configured paste key so they know what to press.
-- **Title comes from content, not the filename** — notes are ID files (`%Y%m%d%H%M%S`, no extension); the list title is read live from the first non-blank line via `title_of` on every scan. There is no rename-on-save, so a note's path is stable across edits. Only **one empty note per folder** may exist (`create_note` reopens an existing one).
+- **Title comes from content, not the filename** — notes are ID files (`%Y%m%d%H%M%S.md`); the list title is read live from the first non-blank line via `title_of` on every scan. There is no rename-on-save, so a note's path is stable across edits. Only **one empty note per folder** may exist (`create_note` reopens an existing one).
 - **`state.closing = true` guard** — `WinClosed` fires for every window when `tabclose` processes them. Without the guard, the scheduled `notes.close()` call would run for each window and recurse.
 - **`state.tab` self-heal in `is_open()`** — if the notes tab is closed externally (`:tabclose`), `state.tab` is stale. `is_open()` detects the invalid tabpage and wipes all state fields so old window IDs cannot cause false matches in the `WinClosed` autocmd on a subsequent open.
 - **`vim.schedule` in git callbacks** — `vim.system` callbacks run in a libuv thread. Any nvim API call from there must be deferred with `vim.schedule`.

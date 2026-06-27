@@ -299,13 +299,13 @@ end
 -- Unique ID filename (timestamp, no extension) inside target_dir.
 local function new_id(target_dir)
   local base = os.date('%Y%m%d%H%M%S')
-  local name = base
+  local name = base .. '.md'
   local i = 1
   while
     fn.filereadable(target_dir .. '/' .. name) == 1
     or fn.isdirectory(target_dir .. '/' .. name) == 1
   do
-    name = base .. '-' .. i
+    name = base .. '-' .. i .. '.md'
     i = i + 1
   end
   return name

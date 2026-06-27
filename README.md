@@ -20,7 +20,7 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 ## Features
 
 - **Two-pane, macOS-Notes-style UI** — opens in a new full-screen tab: **folders** (left column) and **notes** (right column) on top, the editor on the bottom. Closing notes closes the tab.
-- **Title from content** — a note has no manual filename. Its title is the **first non-blank line** of its text; an empty note is titled **"New Note"** and is always pinned to the top of the list. On disk each note is an opaque ID file (no extension), so editing a title never churns git history or collides. The notes column shows `dd.mm.yyyy - Title`, sorted by modification time (newest first). **The title in the list updates live as you type**, without saving.
+- **Title from content** — a note has no manual filename. Its title is the **first non-blank line** of its text; an empty note is titled **"New Note"** and is always pinned to the top of the list. On disk each note is an opaque ID file (`.md` extension, e.g. `20260627143000.md`), so editing a title never churns git history or collides. The notes column shows `dd.mm.yyyy - Title`, sorted by modification time (newest first). **The title in the list updates live as you type**, without saving.
 - **Folders, one level deep** — the folders column lists **"Notes"** (the root: notes that have no folder) plus your folders, sorted so the folder with the most recently edited note comes first. Selecting a folder filters the notes column to it. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
 - **Move by cursor** — press `x` on a note to mark it (highlighted with the selection color), then navigate to a folder in the folders column and press `p` to drop it there.
 - **Native editing** — the editor window behaves like a normal `markdown` file window (`number`, `cursorline`, `signcolumn`), so global `InsertEnter`/`InsertLeave` styling and statusline plugins work inside it.
@@ -175,16 +175,16 @@ All three windows use fixed per-window statuslines (` Folders`, ` Notes`, ` Edit
 ### File structure
 
 ```
-~/.notes/             ← config.dir
-  20260626223010     ← a note: opaque ID file, no extension; title = first line
-  Work/              ← a folder (one level deep)
-    20260625101500   ← a note inside the folder
-    .gitkeep         ← hidden marker so an empty folder still commits
+~/.notes/                  ← config.dir
+  20260626223010.md        ← a note: opaque ID file (.md); title = first line
+  Work/                    ← a folder (one level deep)
+    20260625101500.md      ← a note inside the folder
+    .gitkeep               ← hidden marker so an empty folder still commits
   Personal/
     .gitkeep
 ```
 
-Each note is an ID-named file; its title in the list is read from the first non-blank line of its content. The virtual "Notes" entry in the folders column is the repo root (notes with no folder). Folders are one level deep — create with `a`, rename with `r`, delete with `d`; move notes between folders with `x` (mark) then `p` (paste into the selected folder).
+Each note is an ID-named `.md` file; its title in the list is read from the first non-blank line of its content. The virtual "Notes" entry in the folders column is the repo root (notes with no folder). Folders are one level deep — create with `a`, rename with `r`, delete with `d`; move notes between folders with `x` (mark) then `p` (paste into the selected folder).
 
 ### Git sync behaviour
 
