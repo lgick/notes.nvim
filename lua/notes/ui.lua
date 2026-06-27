@@ -77,6 +77,11 @@ function M.show_placeholder()
   vim.wo[st.edit_win].cursorline = false
   vim.wo[st.edit_win].signcolumn = 'no'
   vim.wo[st.edit_win].statusline = ' Editor'
+  vim.wo[st.edit_win].wrap = false
+  vim.wo[st.edit_win].linebreak = false
+  vim.wo[st.edit_win].breakindent = false
+  vim.wo[st.edit_win].spell = false
+  vim.wo[st.edit_win].conceallevel = 0
 
   M.set_nav_keymaps(buf)
   vim.keymap.set('n', cfg().keys.close, function()
@@ -308,6 +313,11 @@ function M.open_in_edit(path)
   vim.wo[st.edit_win].relativenumber = true
   vim.wo[st.edit_win].cursorline = true
   vim.wo[st.edit_win].signcolumn = 'yes'
+  vim.wo[st.edit_win].wrap = true
+  vim.wo[st.edit_win].linebreak = true
+  vim.wo[st.edit_win].breakindent = true
+  vim.wo[st.edit_win].spell = false
+  vim.wo[st.edit_win].conceallevel = 2
   -- %m shows [+] while the note has unsaved changes, nothing once written
   vim.wo[st.edit_win].statusline = ' Editor %m'
 
