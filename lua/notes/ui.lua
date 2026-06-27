@@ -38,6 +38,7 @@ local function setup_highlights()
   api.nvim_set_hl(0, 'NotesFile', { default = true, link = 'Normal' })
   api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'Visual' })
   api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'CursorLine' })
+  api.nvim_set_hl(0, 'NotesTitle', { default = true, bold = true })
   -- NotesDirActive: Directory fg (blue) on CursorLine bg — for the selected folder row.
   -- No standard group combines both, so we compute it from the resolved colors.
   local dir = api.nvim_get_hl(0, { name = 'Directory', link = false })
@@ -283,7 +284,6 @@ function M.open()
   api.nvim_set_current_win(st.folders_win)
 end
 
-
 function M.open_in_edit(path)
   local st = require('notes').state
   if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
@@ -313,7 +313,7 @@ function M.open_in_edit(path)
   vim.wo[st.edit_win].number = true
   vim.wo[st.edit_win].relativenumber = true
   vim.wo[st.edit_win].cursorline = true
-  vim.wo[st.edit_win].signcolumn = 'yes'
+  vim.wo[st.edit_win].signcolumn = 'no'
   vim.wo[st.edit_win].wrap = true
   vim.wo[st.edit_win].linebreak = true
   vim.wo[st.edit_win].breakindent = true
@@ -335,7 +335,7 @@ function M.open_in_edit(path)
       require('notes.picker').update_live_title(buf, path)
     end,
   })
--- focus is NOT moved: opening a note leaves the cursor in the notes/folders window
+  -- focus is NOT moved: opening a note leaves the cursor in the notes/folders window
 end
 
 function M.close()

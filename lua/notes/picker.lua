@@ -9,6 +9,7 @@ local fn = vim.fn
 local ns = api.nvim_create_namespace('notes_list')
 local ns_active = api.nvim_create_namespace('notes_active')
 local ns_folders = api.nvim_create_namespace('notes_folders')
+local ns_title = api.nvim_create_namespace('notes_title')
 
 local EMPTY_TITLE = 'New Note'
 local ROOT_LABEL = 'Notes' -- virtual folder for notes that live at the repo root
@@ -201,8 +202,16 @@ function M.render_notes()
   vim.bo[st.list_buf].modifiable = false
 
   api.nvim_buf_clear_namespace(st.list_buf, ns, 0, -1)
+  api.nvim_buf_clear_namespace(st.list_buf, ns_title, 0, -1)
   if not empty then
+    local prefix = 13 -- len("dd.mm.yyyy - ")
     for i, it in ipairs(st.items) do
+      api.nvim_buf_set_extmark(st.list_buf, ns_title, i - 1, prefix, {
+        end_col = #lines[i],
+        hl_group = 'NotesTitle',
+        hl_mode = 'combine',
+        priority = 100,
+      })
       if it.file == st.cut then
         -- hl_group over the text only (not full width); priority > NotesActive (0)
         api.nvim_buf_set_extmark(
