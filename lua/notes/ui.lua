@@ -283,6 +283,121 @@ function M.open()
   api.nvim_set_current_win(st.folders_win)
 end
 
+local function split_table_row(line)
+  local inner = vim.trim(line):sub(2, -2)
+  local cells = {}
+  for cell in (inner .. '|'):gmatch('([^|]*)|') do
+    cells[#cells + 1] = vim.trim(cell)
+  end
+  return cells
+end
+
+local function is_sep_cells(cells)
+  if #cells == 0 then return false end
+  for _, c in ipairs(cells) do
+    if c ~= '' and not c:match('^:?%-+:?$') then return false end
+  end
+  return true
+end
+
+local function sep_alignment(cell)
+  local left  = cell:sub(1, 1) == ':'
+  local right = cell:sub(-1)   == ':'
+  if left and right then return 'center'
+  elseif left       then return 'left'
+  elseif right      then return 'right'
+  else                   return 'none'
+  end
+end
+
+local function format_table_block(block)
+  local parsed, col_n = {}, 0
+  for _, line in ipairs(block) do
+    local cells = split_table_row(line)
+    if #cells > col_n then col_n = #cells end
+    parsed[#parsed + 1] = cells
+  end
+  if col_n == 0 then return block end
+
+  local sep_row, align = nil, {}
+  for ri, cells in ipairs(parsed) do
+    if is_sep_cells(cells) then
+      sep_row = ri
+      for ci = 1, col_n do align[ci] = sep_alignment(cells[ci] or '---') end
+      break
+    end
+  end
+  for ci = 1, col_n do align[ci] = align[ci] or 'none' end
+
+  local widths = {}
+  for ci = 1, col_n do widths[ci] = 3 end
+  for ri, cells in ipairs(parsed) do
+    if ri ~= sep_row then
+      for ci = 1, col_n do
+        local w = fn.strdisplaywidth(cells[ci] or '')
+        if w > widths[ci] then widths[ci] = w end
+      end
+    end
+  end
+
+  local out = {}
+  for ri, cells in ipairs(parsed) do
+    local parts = { '|' }
+    if ri == sep_row then
+      for ci = 1, col_n do
+        local w, a = widths[ci], align[ci]
+        local s
+        if a == 'center' then      s = ':' .. string.rep('-', w) .. ':'
+        elseif a == 'left' then    s = ':' .. string.rep('-', w + 1)
+        elseif a == 'right' then   s = string.rep('-', w + 1) .. ':'
+        else                       s = string.rep('-', w + 2)
+        end
+        parts[#parts + 1] = s .. '|'
+      end
+    else
+      for ci = 1, col_n do
+        local cell = cells[ci] or ''
+        local pad  = widths[ci] - fn.strdisplaywidth(cell)
+        parts[#parts + 1] = ' ' .. cell .. string.rep(' ', pad) .. ' |'
+      end
+    end
+    out[#out + 1] = table.concat(parts)
+  end
+  return out
+end
+
+local function format_tables(buf)
+  local lines  = api.nvim_buf_get_lines(buf, 0, -1, false)
+  local result = {}
+  local i, n   = 1, #lines
+
+  while i <= n do
+    if vim.trim(lines[i]):match('^|.*|$') then
+      local block = {}
+      while i <= n and vim.trim(lines[i]):match('^|.*|$') do
+        block[#block + 1] = lines[i]
+        i = i + 1
+      end
+      for _, fl in ipairs(format_table_block(block)) do
+        result[#result + 1] = fl
+      end
+    else
+      result[#result + 1] = lines[i]
+      i = i + 1
+    end
+  end
+
+  local same = (#result == #lines)
+  if same then
+    for j = 1, #result do
+      if result[j] ~= lines[j] then same = false; break end
+    end
+  end
+  if not same then
+    api.nvim_buf_set_lines(buf, 0, -1, false, result)
+  end
+end
+
 function M.open_in_edit(path)
   local st = require('notes').state
   if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
@@ -333,6 +448,12 @@ function M.open_in_edit(path)
     buffer = buf,
     callback = function()
       require('notes.picker').update_live_title(buf, path)
+    end,
+  })
+  api.nvim_create_autocmd('BufWritePre', {
+    buffer = buf,
+    callback = function()
+      format_tables(buf)
     end,
   })
   -- focus is NOT moved: opening a note leaves the cursor in the notes/folders window
