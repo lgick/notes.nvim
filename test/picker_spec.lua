@@ -269,6 +269,145 @@ do
   notes.close()
 end
 
+-- ── title_of: unit tests ──────────────────────────────────────────────────────
+do
+  io.write('title_of\n')
+  local dir = tmpdir()
+  writefile(dir .. '/t1', { 'First line', 'second line' })
+  writefile(dir .. '/t2', { '', '  ', 'actual title' })
+  writefile(dir .. '/t3', {})
+
+  local t1, e1 = picker.title_of(dir .. '/t1')
+  local t2, e2 = picker.title_of(dir .. '/t2')
+  local t3, e3 = picker.title_of(dir .. '/t3')
+  local t4, e4 = picker.title_of(dir .. '/nonexistent')
+
+  check('title from first line', t1 == 'First line' and e1 == false, t1)
+  check('title skips blank lines', t2 == 'actual title' and e2 == false, t2)
+  check('empty file → New Note', t3 == 'New Note' and e3 == true, t3)
+  check('missing file → New Note', t4 == 'New Note' and e4 == true, t4)
+end
+
+-- ── update_live_title: in-memory update without disk read ─────────────────────
+do
+  io.write('update_live_title\n')
+  local dir = tmpdir()
+  writefile(dir .. '/note', { 'original title' })
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.open_selected()
+  check('note open in editor', notes.state.current_file ~= nil)
+
+  local buf = notes.state.edit_buf
+  api.nvim_buf_set_lines(buf, 0, -1, false, { '', 'updated title', 'body' })
+  picker.update_live_title(buf, notes.state.current_file)
+
+  check('items title updated', notes.state.items[1].title == 'updated title', notes.state.items[1].title)
+  local row = api.nvim_buf_get_lines(notes.state.list_buf, 0, -1, false)[1]
+  check('rendered row shows updated title', row:find('updated title') ~= nil, row)
+  check('empty flag cleared after update', notes.state.items[1].empty == false)
+
+  -- reset modified flag so tabclose in notes.close() doesn't raise E37
+  vim.bo[buf].modified = false
+  notes.close()
+end
+
+-- ── create_note in a subfolder ────────────────────────────────────────────────
+do
+  io.write('create note in subfolder\n')
+  local dir = tmpdir()
+  fn.mkdir(dir .. '/Work', 'p')
+  fn.writefile({}, dir .. '/Work/.gitkeep')
+
+  fresh_open(dir)
+  notes.state.current_folder = 'Work'
+  picker.create_note()
+
+  local f = notes.state.current_file
+  check('note created', f ~= nil and fn.filereadable(f) == 1)
+  check('note is inside Work/', f ~= nil and f:find('/Work/') ~= nil, tostring(f))
+
+  notes.close()
+end
+
+-- ── move note to root (paste back to Notes) ───────────────────────────────────
+do
+  io.write('move note to root\n')
+  local dir = tmpdir()
+  writefile(dir .. '/Inbox/n1', { 'inbox note' })
+
+  fresh_open(dir)
+  notes.state.current_folder = 'Inbox'
+  picker.filter()
+  picker.render_notes()
+
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.cut_note()
+  check('cut set', notes.state.cut ~= nil)
+
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- row 1 = Notes (root)
+  picker.paste_note()
+
+  check('note moved to root dir', fn.filereadable(dir .. '/n1') == 1, dir .. '/n1')
+  check('old path gone', fn.filereadable(dir .. '/Inbox/n1') == 0)
+  check('cut cleared', notes.state.cut == nil)
+
+  notes.close()
+end
+
+-- ── delete folder resets current_folder ──────────────────────────────────────
+do
+  io.write('delete folder resets current_folder\n')
+  local dir = tmpdir()
+  writefile(dir .. '/Gone/n1', { 'orphan note' })
+
+  fresh_open(dir)
+  notes.state.current_folder = 'Gone'
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Gone' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+      break
+    end
+  end
+
+  local orig = vim.fn.confirm
+  vim.fn.confirm = function() return 1 end
+  picker.delete_folder()
+  vim.fn.confirm = orig
+
+  check('folder deleted from disk', fn.isdirectory(dir .. '/Gone') == 0)
+  check('current_folder reset to nil', notes.state.current_folder == nil)
+  check('root view is active after delete', notes.state.items ~= nil)
+
+  notes.close()
+end
+
+-- ── paste_note no-op when nothing is cut ──────────────────────────────────────
+do
+  io.write('paste no-op without cut\n')
+  local dir = tmpdir()
+  writefile(dir .. '/note', { 'test' })
+  fn.mkdir(dir .. '/Dest', 'p')
+  fn.writefile({}, dir .. '/Dest/.gitkeep')
+
+  fresh_open(dir)
+  notes.state.cut = nil
+
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Dest' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+      break
+    end
+  end
+  picker.paste_note()
+
+  check('note not moved (no cut)', fn.filereadable(dir .. '/note') == 1)
+  check('dest folder still empty', fn.filereadable(dir .. '/Dest/note') == 0)
+
+  notes.close()
+end
+
 io.write('\n')
 if failures > 0 then
   io.write(failures .. ' check(s) FAILED\n')

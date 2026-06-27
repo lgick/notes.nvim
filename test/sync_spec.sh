@@ -185,7 +185,36 @@ s8() {
   teardown
 }
 
-s1; s2_yes; s2_no; s3; s4; s5; s6; s7; s8
+# ── S9: UD conflict (remote modified, local deleted) → git rm resolves ────────
+s9_yes() {
+  echo 'S9a: UD conflict (remote modified, local deleted), Yes → deletion propagated'
+  setup
+  printf 'hello\nREMOTE\n' >"$B/note.txt"; gitq "$B" add -A; gitq "$B" commit -m r; gitq "$B" push
+  rm "$A/note.txt"   # uncommitted local deletion
+  drive sync 1       # Yes: keep local (deletion wins, push the rm)
+  check 'driver ok' 0 $?
+  check 'local deletion kept on disk' 'gone' "$([ -e "$A/note.txt" ] && echo exists || echo gone)"
+  check 'tree clean' '' "$(git -C "$A" status --porcelain)"
+  check 'no stash left' '' "$(git -C "$A" stash list)"
+  teardown
+}
+
+s9_no() {
+  echo 'S9b: UD conflict (remote modified, local deleted), No → remote version restored'
+  setup
+  printf 'hello\nREMOTE\n' >"$B/note.txt"; gitq "$B" add -A; gitq "$B" commit -m r; gitq "$B" push
+  local before; before="$(git -C "$REMOTE" rev-parse HEAD)"
+  rm "$A/note.txt"
+  drive sync 2       # No: keep remote (GitHub version)
+  check 'driver ok' 0 $?
+  check 'remote version restored on disk' "$(printf 'hello\nREMOTE')" "$(cat "$A/note.txt" 2>/dev/null)"
+  check 'tree clean' '' "$(git -C "$A" status --porcelain)"
+  check 'no stash left' '' "$(git -C "$A" stash list)"
+  check 'remote unchanged (no push)' "$before" "$(git -C "$REMOTE" rev-parse HEAD)"
+  teardown
+}
+
+s1; s2_yes; s2_no; s3; s4; s5; s6; s7; s8; s9_yes; s9_no
 
 echo
 if [ "$fails" -gt 0 ]; then
