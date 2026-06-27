@@ -82,6 +82,7 @@ function M.show_placeholder()
   vim.wo[st.edit_win].breakindent = false
   vim.wo[st.edit_win].spell = false
   vim.wo[st.edit_win].conceallevel = 0
+  vim.wo[st.edit_win].concealcursor = ''
 
   M.set_nav_keymaps(buf)
   vim.keymap.set('n', cfg().keys.close, function()
@@ -304,8 +305,8 @@ function M.open_in_edit(path)
   local buf = api.nvim_win_get_buf(st.edit_win)
   st.edit_buf = buf
   st.current_file = path
-  -- notes are ID-named (no extension); markdown gives sensible editing/highlighting
-  vim.bo[buf].filetype = 'markdown'
+  -- syntax only, not filetype: avoids markdown ftplugin overriding user's tabstop/shiftwidth
+  vim.bo[buf].syntax = 'markdown'
 
   -- set window options like a normal file; do NOT pin StatusLine/CursorLineNr in
   -- winhighlight — the user's global UpdateInsertModeColor (InsertEnter/Leave) must work
@@ -318,6 +319,7 @@ function M.open_in_edit(path)
   vim.wo[st.edit_win].breakindent = true
   vim.wo[st.edit_win].spell = false
   vim.wo[st.edit_win].conceallevel = 2
+  vim.wo[st.edit_win].concealcursor = 'nc'
   -- %m shows [+] while the note has unsaved changes, nothing once written
   vim.wo[st.edit_win].statusline = ' Editor %m'
 
