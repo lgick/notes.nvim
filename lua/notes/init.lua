@@ -51,11 +51,18 @@ function M.is_open()
     end
     -- tab was externally closed; wipe stale state so old window IDs can't trigger autocmds
     st.tab = nil
-    st.folders_win = nil; st.folders_buf = nil
-    st.list_win = nil; st.list_buf = nil
-    st.edit_win = nil; st.edit_buf = nil
-    st.current_file = nil; st.current_folder = nil; st.cut = nil
-    st.items = nil; st.notes_all = nil; st.folders = nil
+    st.folders_win = nil
+    st.folders_buf = nil
+    st.list_win = nil
+    st.list_buf = nil
+    st.edit_win = nil
+    st.edit_buf = nil
+    st.current_file = nil
+    st.current_folder = nil
+    st.cut = nil
+    st.items = nil
+    st.notes_all = nil
+    st.folders = nil
   end
   return false
 end

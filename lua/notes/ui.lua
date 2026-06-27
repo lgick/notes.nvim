@@ -293,20 +293,28 @@ local function split_table_row(line)
 end
 
 local function is_sep_cells(cells)
-  if #cells == 0 then return false end
+  if #cells == 0 then
+    return false
+  end
   for _, c in ipairs(cells) do
-    if c ~= '' and not c:match('^:?%-+:?$') then return false end
+    if c ~= '' and not c:match('^:?%-+:?$') then
+      return false
+    end
   end
   return true
 end
 
 local function sep_alignment(cell)
-  local left  = cell:sub(1, 1) == ':'
-  local right = cell:sub(-1)   == ':'
-  if left and right then return 'center'
-  elseif left       then return 'left'
-  elseif right      then return 'right'
-  else                   return 'none'
+  local left = cell:sub(1, 1) == ':'
+  local right = cell:sub(-1) == ':'
+  if left and right then
+    return 'center'
+  elseif left then
+    return 'left'
+  elseif right then
+    return 'right'
+  else
+    return 'none'
   end
 end
 
@@ -314,28 +322,40 @@ local function format_table_block(block)
   local parsed, col_n = {}, 0
   for _, line in ipairs(block) do
     local cells = split_table_row(line)
-    if #cells > col_n then col_n = #cells end
+    if #cells > col_n then
+      col_n = #cells
+    end
     parsed[#parsed + 1] = cells
   end
-  if col_n == 0 then return block end
+  if col_n == 0 then
+    return block
+  end
 
   local sep_row, align = nil, {}
   for ri, cells in ipairs(parsed) do
     if is_sep_cells(cells) then
       sep_row = ri
-      for ci = 1, col_n do align[ci] = sep_alignment(cells[ci] or '---') end
+      for ci = 1, col_n do
+        align[ci] = sep_alignment(cells[ci] or '---')
+      end
       break
     end
   end
-  for ci = 1, col_n do align[ci] = align[ci] or 'none' end
+  for ci = 1, col_n do
+    align[ci] = align[ci] or 'none'
+  end
 
   local widths = {}
-  for ci = 1, col_n do widths[ci] = 3 end
+  for ci = 1, col_n do
+    widths[ci] = 3
+  end
   for ri, cells in ipairs(parsed) do
     if ri ~= sep_row then
       for ci = 1, col_n do
         local w = fn.strdisplaywidth(cells[ci] or '')
-        if w > widths[ci] then widths[ci] = w end
+        if w > widths[ci] then
+          widths[ci] = w
+        end
       end
     end
   end
@@ -347,17 +367,21 @@ local function format_table_block(block)
       for ci = 1, col_n do
         local w, a = widths[ci], align[ci]
         local s
-        if a == 'center' then      s = ':' .. string.rep('-', w) .. ':'
-        elseif a == 'left' then    s = ':' .. string.rep('-', w + 1)
-        elseif a == 'right' then   s = string.rep('-', w + 1) .. ':'
-        else                       s = string.rep('-', w + 2)
+        if a == 'center' then
+          s = ':' .. string.rep('-', w) .. ':'
+        elseif a == 'left' then
+          s = ':' .. string.rep('-', w + 1)
+        elseif a == 'right' then
+          s = string.rep('-', w + 1) .. ':'
+        else
+          s = string.rep('-', w + 2)
         end
         parts[#parts + 1] = s .. '|'
       end
     else
       for ci = 1, col_n do
         local cell = cells[ci] or ''
-        local pad  = widths[ci] - fn.strdisplaywidth(cell)
+        local pad = widths[ci] - fn.strdisplaywidth(cell)
         parts[#parts + 1] = ' ' .. cell .. string.rep(' ', pad) .. ' |'
       end
     end
@@ -367,9 +391,9 @@ local function format_table_block(block)
 end
 
 local function format_tables(buf)
-  local lines  = api.nvim_buf_get_lines(buf, 0, -1, false)
+  local lines = api.nvim_buf_get_lines(buf, 0, -1, false)
   local result = {}
-  local i, n   = 1, #lines
+  local i, n = 1, #lines
 
   while i <= n do
     if vim.trim(lines[i]):match('^|.*|$') then
@@ -390,7 +414,10 @@ local function format_tables(buf)
   local same = (#result == #lines)
   if same then
     for j = 1, #result do
-      if result[j] ~= lines[j] then same = false; break end
+      if result[j] ~= lines[j] then
+        same = false
+        break
+      end
     end
   end
   if not same then
@@ -420,8 +447,7 @@ function M.open_in_edit(path)
   local buf = api.nvim_win_get_buf(st.edit_win)
   st.edit_buf = buf
   st.current_file = path
-  -- syntax only, not filetype: avoids markdown ftplugin overriding user's tabstop/shiftwidth
-  vim.bo[buf].syntax = 'markdown'
+  vim.bo[buf].filetype = 'markdown'
 
   -- set window options like a normal file; do NOT pin StatusLine/CursorLineNr in
   -- winhighlight — the user's global UpdateInsertModeColor (InsertEnter/Leave) must work

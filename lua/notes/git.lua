@@ -126,10 +126,8 @@ function M.open_github()
     return
   end
 
-  local url = repo
-    :gsub('^git@([^:]+):', 'https://%1/')
-    :gsub('^ssh://git@', 'https://')
-    :gsub('%.git$', '')
+  local url =
+    repo:gsub('^git@([^:]+):', 'https://%1/'):gsub('^ssh://git@', 'https://'):gsub('%.git$', '')
 
   vim.ui.open(url)
 end
@@ -255,7 +253,12 @@ function M.sync_on_exit()
         return
       end
 
-      local names = table.concat(vim.tbl_map(function(e) return e.file end, conflicts), ', ')
+      local names = table.concat(
+        vim.tbl_map(function(e)
+          return e.file
+        end, conflicts),
+        ', '
+      )
       -- conflict dialog runs on the main thread (we are inside vim.schedule)
       local choice = vim.fn.confirm(
         '[notes.nvim] GitHub updated: ' .. names .. '\nLocal changes will overwrite. Push?',
@@ -406,9 +409,7 @@ function M.sync_on_exit()
 
   -- check uncommitted changes
   git({ 'status', '--porcelain' }, c.dir, function(status_res)
-    local has_changes = status_res.code == 0
-      and status_res.stdout
-      and status_res.stdout ~= ''
+    local has_changes = status_res.code == 0 and status_res.stdout and status_res.stdout ~= ''
 
     if has_changes then
       sync_with_remote_then_commit()
