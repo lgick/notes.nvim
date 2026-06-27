@@ -90,10 +90,10 @@ require('notes').setup({
   repo = 'git@github.com:youruser/notes.git',
 
   -- Height of the folders/notes row in rows (content rows, excluding statusline).
-  list_height = 20,
+  list_height = 10,
 
   -- Width of the folders column.
-  folders_width = 22,
+  folders_width = 25,
 
   -- Keymaps (override individually; unset keys keep their defaults).
   keys = {
