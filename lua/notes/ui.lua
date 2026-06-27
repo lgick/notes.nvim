@@ -5,8 +5,32 @@ local M = {}
 local api = vim.api
 local fn = vim.fn
 
+-- saved value of `tabline` before we override it; nil means we didn't override
+local _old_tabline = nil
+
 local function cfg()
   return require('notes').config
+end
+
+-- Called by the `tabline` option expression. Builds the full tabline string so
+-- the notes tab always shows 'notes.nvim' regardless of the focused window inside it.
+-- Other tabs fall back to the buffer name of their focused window.
+function M.tabline()
+  local parts = {}
+  local current = api.nvim_get_current_tabpage()
+  for _, tp in ipairs(api.nvim_list_tabpages()) do
+    local hl = tp == current and '%#TabLineSel#' or '%#TabLine#'
+    local ok, title = pcall(api.nvim_tabpage_get_var, tp, 'title')
+    if not ok then
+      local win = api.nvim_tabpage_get_win(tp)
+      local buf = api.nvim_win_get_buf(win)
+      local name = api.nvim_buf_get_name(buf)
+      title = name ~= '' and fn.fnamemodify(name, ':t') or '[No Name]'
+    end
+    parts[#parts + 1] = hl .. ' ' .. title .. ' '
+  end
+  parts[#parts + 1] = '%#TabLineFill#'
+  return table.concat(parts)
 end
 
 local function setup_highlights()
@@ -195,6 +219,13 @@ function M.open()
   st.tab = api.nvim_get_current_tabpage()
   local base_win = api.nvim_get_current_win()
 
+  -- pin the tab label; tabline plugins can read t:title, built-in tabline uses M.tabline()
+  api.nvim_tabpage_set_var(st.tab, 'title', 'notes.nvim')
+  if vim.o.tabline == '' then
+    _old_tabline = ''
+    vim.o.tabline = '%!v:lua.require("notes.ui").tabline()'
+  end
+
   -- wipe the empty buffer that tabnew created
   vim.bo[api.nvim_get_current_buf()].bufhidden = 'wipe'
 
@@ -242,8 +273,8 @@ function M.open()
 
   setup_autocmds(st)
 
-  -- focus the notes column (no search box to enter)
-  api.nvim_set_current_win(st.list_win)
+  -- focus the folders column on open
+  api.nvim_set_current_win(st.folders_win)
 end
 
 function M.open_in_edit(path)
@@ -317,6 +348,11 @@ function M.close()
   st.items = nil
   st.notes_all = nil
   st.folders = nil
+
+  if _old_tabline ~= nil then
+    vim.o.tabline = _old_tabline
+    _old_tabline = nil
+  end
 
   if tab and api.nvim_tabpage_is_valid(tab) then
     pcall(vim.cmd, 'tabclose ' .. api.nvim_tabpage_get_number(tab))
