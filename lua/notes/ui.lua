@@ -290,6 +290,10 @@ function M.open_in_edit(path)
     return
   end
 
+  if st.current_file == path then
+    return
+  end
+
   -- write current file before switching: :edit on a modified buffer raises E37,
   -- and unsaved edits would be lost when close() runs
   local cur = api.nvim_win_get_buf(st.edit_win)
