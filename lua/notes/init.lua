@@ -20,7 +20,7 @@ M.config = {
     open_github = 'O', -- open the notes repo in the browser
     scroll_down = '<C-n>', -- notes: scroll the open note down
     scroll_up = '<C-p>', -- notes: scroll the open note up
-    close = '<C-[>', -- close notes (≡ <Esc> in terminal)
+    close = 'q', -- close notes (works from any notes window)
     window_nav = '<C-w>', -- prefix: h/j/k/l → move between windows (wincmd)
   },
 }

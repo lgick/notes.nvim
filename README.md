@@ -107,14 +107,11 @@ require('notes').setup({
     open_github = 'O',     -- open the notes repository in the browser
     scroll_down = '<C-n>', -- notes: scroll the open note down
     scroll_up   = '<C-p>', -- notes: scroll the open note up
-    close       = '<C-[>', -- close notes (works from any notes window)
+    close       = 'q',     -- close notes (works from any notes window)
     window_nav  = '<C-w>', -- prefix; then h/j/k/l → move between windows
   },
 })
 ```
-
-> **Note:** `<C-[>` is byte-identical to `<Esc>` in the terminal — with the default
-> `close` binding, pressing `<Esc>` also closes notes.
 
 ### Keymap (suggested)
 
@@ -151,7 +148,7 @@ All keys are configurable via `config.keys` (see above).
 | `R` | Refresh the list | folders / notes |
 | `O` | Open the notes repository in the browser | folders / notes |
 | `<C-w>` then `h`/`j`/`k`/`l` | Move between windows | any |
-| `<C-[>` / `<Esc>` | Close notes (prompts if editor has unsaved changes) | any |
+| `q` | Close notes (prompts if editor has unsaved changes) | any |
 
 Window navigation reads the direction key right after `<C-w>` (via `getcharstr`), so it is not affected by `timeoutlen`. It moves spatially between the three windows (`wincmd h/j/k/l`). Pressing `<C-w>k` from the editor always goes to the notes column (not folders).
 
