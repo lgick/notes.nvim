@@ -215,7 +215,38 @@ s9() {
   teardown
 }
 
-s1; s2; s2_guard; s3; s4; s5; s6; s7; s8; s9
+# ── S10: conflict on OPEN with an UNCOMMITTED local edit → real merge, not a ──
+#         stash-pop orphan. The old --autostash left markers with NO MERGE_HEAD,
+#         and the next sync then `git add -A`-committed (and pushed) the markers.
+s10() {
+  echo 'S10: dirty conflict on open → MERGE_HEAD (no stash-pop), markers never pushed'
+  setup
+  printf 'hello\nREMOTE\n' >"$B/note.txt"; gitq "$B" add -A; gitq "$B" commit -m r; gitq "$B" push
+  printf 'hello\nLOCAL\n' >"$A/note.txt"   # UNCOMMITTED local edit, same line
+  drive pull                               # open: commit-first then merge
+  check 'driver ok' 0 $?
+  check 'real merge in progress' 'yes' "$(merging)"
+  check 'file has conflict markers' 'yes' "$(has_markers note.txt)"
+  check 'no stash leaked' '' "$(git -C "$A" stash list)"
+
+  local before; before="$(git -C "$REMOTE" rev-parse HEAD)"
+  drive sync                               # must NOT commit/push the marker file
+  check 'driver ok (sync)' 0 $?
+  check 'still merging' 'yes' "$(merging)"
+  check 'markers still present' 'yes' "$(has_markers note.txt)"
+  check 'markers NOT pushed' "$before" "$(git -C "$REMOTE" rev-parse HEAD)"
+  check 'remote note still clean' "$(printf 'hello\nREMOTE')" "$(remote_file note.txt)"
+
+  # resolve and sync → merge completes and pushes the resolution
+  printf 'hello\nLOCAL\nREMOTE\n' >"$A/note.txt"
+  drive sync
+  check 'driver ok (resolve)' 0 $?
+  check 'merge finished' 'no' "$(merging)"
+  check 'resolved content pushed' "$(printf 'hello\nLOCAL\nREMOTE')" "$(remote_file note.txt)"
+  teardown
+}
+
+s1; s2; s2_guard; s3; s4; s5; s6; s7; s8; s9; s10
 
 echo
 if [ "$fails" -gt 0 ]; then

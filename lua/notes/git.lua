@@ -196,16 +196,24 @@ function M.pull(cb)
       return
     end
 
-    -- --autostash keeps the merge from failing on a dirty working tree;
-    -- --no-edit avoids opening an editor for the merge commit message
-    git({ 'pull', '--no-rebase', '--no-edit', '--autostash' }, c.dir, function(res)
-      update_conflicts(c.dir, function(set)
-        if next(set) then
-          notify_conflict(vim.tbl_keys(set))
-        elseif res.code ~= 0 then
-          notify('Pull failed: ' .. (res.stderr or ''), vim.log.levels.WARN)
-        end
-        cb()
+    -- Commit local changes before merging so a conflict becomes a real MERGE_HEAD
+    -- merge (markers + MERGE_HEAD), which the resolve flow handles. The old
+    -- --autostash could instead leave a stash-pop conflict — markers with NO
+    -- MERGE_HEAD — which merging() can't see, so the next sync_on_exit would blindly
+    -- `git add -A` and commit (even push) the marker file. ("nothing to commit"
+    -- here is fine: there was nothing local to save.) --no-edit skips the editor.
+    git({ 'add', '-A' }, c.dir, function()
+      git({ 'commit', '-m', 'notes: ' .. os.date('%Y-%m-%d %H:%M') }, c.dir, function()
+        git({ 'pull', '--no-rebase', '--no-edit' }, c.dir, function(res)
+          update_conflicts(c.dir, function(set)
+            if next(set) then
+              notify_conflict(vim.tbl_keys(set))
+            elseif res.code ~= 0 then
+              notify('Pull failed: ' .. (res.stderr or ''), vim.log.levels.WARN)
+            end
+            cb()
+          end)
+        end)
       end)
     end)
   end)
@@ -352,22 +360,27 @@ function M.sync_on_exit()
     end)
   end
 
-  -- already mid-merge (e.g. a save that resolved markers): finish the merge
-  if merging(c.dir) then
-    do_resolve()
-    return
-  end
+  -- Route to the resolve flow when the index has any unmerged entry: a normal
+  -- MERGE_HEAD merge (e.g. a save that resolved markers), OR a stash-pop conflict
+  -- (markers but NO MERGE_HEAD) that merging() alone can't detect. do_resolve stops
+  -- if any conflicted file still has markers, so the marker file is never committed.
+  update_conflicts(c.dir, function(set)
+    if merging(c.dir) or next(set) then
+      do_resolve()
+      return
+    end
 
-  -- normal path: commit local edits, merge remote, then resolve/push
-  commit_only(function()
-    git({ 'ls-remote', '--heads', 'origin' }, c.dir, function(ls_res)
-      if ls_res.code ~= 0 or not ls_res.stdout or ls_res.stdout == '' then
-        -- no remote branches yet (fresh repo): push our commit and set upstream
-        do_push()
-        return
-      end
-      git({ 'pull', '--no-rebase', '--no-edit' }, c.dir, function()
-        do_resolve()
+    -- normal path: commit local edits, merge remote, then resolve/push
+    commit_only(function()
+      git({ 'ls-remote', '--heads', 'origin' }, c.dir, function(ls_res)
+        if ls_res.code ~= 0 or not ls_res.stdout or ls_res.stdout == '' then
+          -- no remote branches yet (fresh repo): push our commit and set upstream
+          do_push()
+          return
+        end
+        git({ 'pull', '--no-rebase', '--no-edit' }, c.dir, function()
+          do_resolve()
+        end)
       end)
     end)
   end)
