@@ -162,6 +162,7 @@ Override these to customize colors (they link to sensible defaults):
 |-------|--------------|------------|
 | `NotesDir` | `Directory` | folder rows |
 | `NotesFile` | `Normal` | note rows (defined for overriding; not applied per-row by default) |
+| `NotesTitle` | `bold` | the title text of each note row (after the date prefix) |
 | `NotesActive` | `CursorLine` | the currently open note in the notes column |
 | `NotesDirActive` | computed | the selected folder in the folders column |
 | `NotesCut` | `Visual` | the note marked for moving (`x`) |
@@ -173,6 +174,8 @@ Override these to customize colors (they link to sensible defaults):
 ### Statusline plugins
 
 All three windows use fixed per-window statuslines (` Folders`, ` Notes`, ` Editor`). If you use a statusline plugin (lualine, etc.) that overrides per-window statuslines, add the filetypes `NotesFolders` and `NotesList` to its exclusion list, and exclude the editor window by filetype (`markdown`) or by checking the buffer path.
+
+The notes tab is labelled `notes.nvim`. The label is pinned in the tab-local variable `t:title`, so tabline plugins that read it show the right name regardless of which inner window is focused. Only if you have **no** `tabline` set does the plugin install its own (restored on close).
 
 ### File structure
 

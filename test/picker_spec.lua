@@ -146,6 +146,23 @@ do
   notes.close()
 end
 
+-- ── NotesTitle highlight covers the title text only (after the date prefix) ────
+do
+  io.write('title highlight\n')
+  local dir = tmpdir()
+  writefile(dir .. '/n', { 'hello' })
+
+  fresh_open(dir)
+  local ns_title = api.nvim_create_namespace('notes_title')
+  local marks = api.nvim_buf_get_extmarks(notes.state.list_buf, ns_title, 0, -1, { details = true })
+  check('one title mark rendered', #marks == 1, 'count=' .. #marks)
+  -- prefix "dd.mm.yyyy - " is 13 bytes; the mark must start there, not at col 0
+  check('title mark starts after date prefix', marks[1] and marks[1][3] == 13, marks[1] and marks[1][3])
+  check('title mark uses NotesTitle', marks[1] and marks[1][4].hl_group == 'NotesTitle')
+
+  notes.close()
+end
+
 -- ── create_folder writes .gitkeep ────────────────────────────────────────────
 do
   io.write('create folder\n')
@@ -213,6 +230,45 @@ do
   check('old path gone', fn.filereadable(dir .. '/movable') == 0)
   check('cut cleared', notes.state.cut == nil)
 
+  notes.close()
+end
+
+-- ── move a note with UNSAVED edits: no duplicate at old path, edits preserved ──
+do
+  io.write('move note with unsaved edits\n')
+  local dir = tmpdir()
+  writefile(dir .. '/movable', { 'move me' })
+  fn.mkdir(dir .. '/Target', 'p')
+  fn.writefile({}, dir .. '/Target/.gitkeep')
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.open_selected()
+  -- modify the open note without saving, then move it
+  api.nvim_buf_set_lines(notes.state.edit_buf, 0, -1, false, { 'move me', 'UNSAVED EDIT' })
+  picker.cut_note()
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Target' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.paste_note()
+
+  check('no duplicate left at old path', fn.filereadable(dir .. '/movable') == 0)
+  check('note present at new path', fn.filereadable(dir .. '/Target/movable') == 1)
+  check(
+    'unsaved edits persisted on move',
+    table.concat(fn.readfile(dir .. '/Target/movable'), '|') == 'move me|UNSAVED EDIT'
+  )
+  local n = 0
+  for name in vim.fs.dir(dir) do
+    if name:sub(1, 1) ~= '.' and name ~= 'Target' then
+      n = n + 1
+    end
+  end
+  check('no stray note at root', n == 0, 'count=' .. n)
+
+  vim.bo[notes.state.edit_buf].modified = false
   notes.close()
 end
 

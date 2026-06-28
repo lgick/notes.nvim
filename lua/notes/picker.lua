@@ -409,6 +409,20 @@ function M.rename_folder()
     local cur = st.current_file
     local inside = cur and cur:sub(1, #oldp + 1) == oldp .. '/'
 
+    -- persist unsaved edits before the rename so they survive the directory move
+    -- (after rename oldp is gone; the post-rename open_in_edit write would fail silently)
+    if
+      inside
+      and st.edit_buf
+      and api.nvim_buf_is_valid(st.edit_buf)
+      and vim.bo[st.edit_buf].buftype == ''
+      and vim.bo[st.edit_buf].modified
+    then
+      api.nvim_buf_call(st.edit_buf, function()
+        vim.cmd('silent write')
+      end)
+    end
+
     fn.rename(oldp, newp)
 
     if inside then
@@ -510,6 +524,23 @@ function M.paste_note()
   end
 
   fn.mkdir(target_dir, 'p')
+
+  -- persist unsaved edits before the rename: open_in_edit writes the editor buffer
+  -- under its old name, which after the rename would recreate the note at its old
+  -- path (a duplicate). Writing now puts the content in src, which rename moves to
+  -- target, and leaves the buffer unmodified so the post-rename write is a no-op.
+  if
+    st.current_file == src
+    and st.edit_buf
+    and api.nvim_buf_is_valid(st.edit_buf)
+    and vim.bo[st.edit_buf].buftype == ''
+    and vim.bo[st.edit_buf].modified
+  then
+    api.nvim_buf_call(st.edit_buf, function()
+      vim.cmd('silent write')
+    end)
+  end
+
   fn.rename(src, target)
 
   if st.current_file == src then
