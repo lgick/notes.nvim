@@ -23,7 +23,13 @@ local function state()
 end
 
 local function sync()
-  if cfg().repo ~= '' then
+  local c = cfg()
+  if c.repo ~= '' then
+    -- Stage changes immediately (local, no network) so that restore() on the next
+    -- open() does not undo in-flight deletions while git fetch is pending offline.
+    if fn.isdirectory(c.dir .. '/.git') == 1 then
+      vim.system({ 'git', 'add', '-A' }, { cwd = c.dir }):wait()
+    end
     require('notes.git').sync_on_exit()
   end
 end
