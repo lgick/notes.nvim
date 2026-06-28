@@ -1,4 +1,8 @@
--- Async git sync: clone / pull / commit / push via vim.system
+-- Async git sync: clone / commit / merge / push via vim.system.
+-- Conflict model: a merge conflict is left in the file as standard git markers
+-- (repo enters MERGING). The conflicted notes are recorded in state.conflicts so
+-- the UI can highlight them; the user resolves the markers in the editor and saves,
+-- which completes the merge and pushes. No modal dialogs.
 
 local M = {}
 
@@ -15,15 +19,93 @@ local function notify(msg, level)
 end
 
 local function git(args, cwd, cb)
-  vim.system(vim.list_extend({ 'git' }, args), { cwd = cwd, text = true }, function(res)
-    vim.schedule(function()
-      cb(res)
-    end)
-  end)
+  -- LC_ALL=C forces English git output so our stdout/stderr string matching
+  -- ("nothing to commit", "fetch first"/"rejected", …) works under any locale.
+  vim.system(
+    vim.list_extend({ 'git' }, args),
+    { cwd = cwd, text = true, env = { LC_ALL = 'C', LANG = 'C' } },
+    function(res)
+      vim.schedule(function()
+        cb(res)
+      end)
+    end
+  )
 end
 
 local function is_repo(dir)
   return fn.isdirectory(dir .. '/.git') == 1
+end
+
+-- A merge is in progress while .git/MERGE_HEAD exists.
+local function merging(dir)
+  return vim.uv.fs_stat(dir .. '/.git/MERGE_HEAD') ~= nil
+end
+
+-- True while the file still contains unresolved conflict markers.
+local function has_markers(file)
+  local ok, lines = pcall(fn.readfile, file)
+  if not ok then
+    return false
+  end
+  for _, l in ipairs(lines) do
+    if
+      l:match('^<<<<<<< ')
+      or l:match('^=======$')
+      or l:match('^>>>>>>> ')
+      or l:match('^||||||| ')
+    then
+      return true
+    end
+  end
+  return false
+end
+
+-- A human label for a conflicted note: its first real content line (skipping the
+-- merge markers), falling back to the file name.
+local function conflict_label(path)
+  local ok, lines = pcall(fn.readfile, path, '', 50)
+  if ok then
+    for _, l in ipairs(lines) do
+      local t = vim.trim(l)
+      if
+        t ~= ''
+        and not t:match('^<<<<<<<')
+        and not t:match('^=======')
+        and not t:match('^>>>>>>>')
+        and not t:match('^|||||||')
+      then
+        return t
+      end
+    end
+  end
+  return fn.fnamemodify(path, ':t')
+end
+
+local function notify_conflict(paths)
+  local labels = {}
+  for _, p in ipairs(paths) do
+    labels[#labels + 1] = conflict_label(p)
+  end
+  notify(
+    'Conflict in: ' .. table.concat(labels, ', ') .. ' — edit and save to resolve',
+    vim.log.levels.WARN
+  )
+end
+
+-- Refresh state.conflicts from git's unmerged-files list. Paths from git are
+-- relative to the repo root; we store absolute paths so they match note.file.
+-- -z avoids path quoting (needed for non-ASCII/spaces). cb receives the set.
+local function update_conflicts(dir, cb)
+  git({ 'diff', '--name-only', '--diff-filter=U', '-z' }, dir, function(res)
+    local set = {}
+    if res.code == 0 and res.stdout then
+      for _, rel in ipairs(vim.split(res.stdout, '\0', { trimempty = true })) do
+        set[dir .. '/' .. rel] = true
+      end
+    end
+    require('notes').state.conflicts = next(set) and set or nil
+    cb(set)
+  end)
 end
 
 function M.ensure_repo(cb)
@@ -60,10 +142,12 @@ end
 -- The plugin commits all its own edits, so an uncommitted deletion at open time
 -- is accidental and must be recovered from the last commit. Modified-but-present
 -- files are left untouched. -z suppresses path quoting (needed for non-ASCII/spaces).
+-- Skipped while a merge is in progress: checking out files would corrupt the
+-- unmerged index entries.
 function M.restore(cb)
   local c = cfg()
 
-  if not is_repo(c.dir) then
+  if not is_repo(c.dir) or merging(c.dir) then
     cb()
     return
   end
@@ -85,13 +169,24 @@ function M.restore(cb)
   end)
 end
 
--- Pull uses the upstream set by clone, no explicit branch needed.
--- Skips silently if the remote has no branches yet (freshly created repo).
+-- Pull on open: merge (not rebase), so a conflict stays as markers in the file
+-- instead of leaving the repo mid-rebase. Skips if the remote has no branches yet.
 function M.pull(cb)
   local c = cfg()
 
   if not is_repo(c.dir) then
     cb()
+    return
+  end
+
+  -- a merge left unresolved from a previous session: surface it, let the user resolve
+  if merging(c.dir) then
+    update_conflicts(c.dir, function(set)
+      if next(set) then
+        notify_conflict(vim.tbl_keys(set))
+      end
+      cb()
+    end)
     return
   end
 
@@ -101,19 +196,17 @@ function M.pull(cb)
       return
     end
 
-    -- --autostash: stash local uncommitted edits before rebase, restore after;
-    -- without it pull fails on a dirty working tree
-    git({ 'pull', '--rebase', '--autostash' }, c.dir, function(res)
-      if res.code ~= 0 then
-        -- a rebase conflict leaves the repo mid-rebase; abort so the next
-        -- sync_on_exit does not commit on top of a broken rebase state
-        git({ 'rebase', '--abort' }, c.dir, function()
+    -- --autostash keeps the merge from failing on a dirty working tree;
+    -- --no-edit avoids opening an editor for the merge commit message
+    git({ 'pull', '--no-rebase', '--no-edit', '--autostash' }, c.dir, function(res)
+      update_conflicts(c.dir, function(set)
+        if next(set) then
+          notify_conflict(vim.tbl_keys(set))
+        elseif res.code ~= 0 then
           notify('Pull failed: ' .. (res.stderr or ''), vim.log.levels.WARN)
-          cb()
-        end)
-        return
-      end
-      cb()
+        end
+        cb()
+      end)
     end)
   end)
 end
@@ -175,10 +268,39 @@ function M.sync_on_exit()
     end
   end
 
-  -- self-healing push: a reject means the remote advanced after our last fetch.
-  -- Rebase local commits on top and retry once. Guarded so we never loop.
+  -- forward declarations: do_push ↔ do_resolve ↔ commit_only reference each other
+  local do_push, do_resolve, commit_only
+
+  -- stage everything and commit; "nothing to commit" is a non-error → cb()
+  commit_only = function(cb)
+    git({ 'add', '-A' }, c.dir, function(add_res)
+      if add_res.code ~= 0 then
+        notify('git add failed: ' .. (add_res.stderr or ''), vim.log.levels.ERROR)
+        finish()
+        return
+      end
+      local msg = 'notes: ' .. os.date('%Y-%m-%d %H:%M')
+      git({ 'commit', '-m', msg }, c.dir, function(commit_res)
+        if commit_res.code ~= 0 then
+          local out = (commit_res.stdout or '') .. (commit_res.stderr or '')
+          if out:find('nothing to commit') or out:find('nothing added to commit') then
+            cb()
+            return
+          end
+          notify('git commit failed: ' .. (commit_res.stderr or ''), vim.log.levels.ERROR)
+          finish()
+          return
+        end
+        cb()
+      end)
+    end)
+  end
+
+  -- self-healing push: a reject means the remote advanced after our last sync.
+  -- Merge it in and retry once. Guarded by pushed_retry so we never loop.
   local pushed_retry = false
-  local function do_push()
+  do_push = function()
+    require('notes').state.conflicts = nil
     git({ 'push', '-u', 'origin', 'HEAD' }, c.dir, function(res)
       if res.code == 0 then
         notify('Synced (pushed)')
@@ -192,15 +314,15 @@ function M.sync_on_exit()
         or err:find('rejected')
       if rejected and not pushed_retry then
         pushed_retry = true
-        git({ 'pull', '--rebase', '--autostash' }, c.dir, function(pull_res)
-          if pull_res.code == 0 then
-            do_push()
-          else
-            git({ 'rebase', '--abort' }, c.dir, function()
-              notify('Push failed: remote diverged, resolve manually', vim.log.levels.ERROR)
+        git({ 'pull', '--no-rebase', '--no-edit' }, c.dir, function(pull_res)
+          update_conflicts(c.dir, function(set)
+            if next(set) or pull_res.code == 0 then
+              do_resolve()
+            else
+              notify('Push failed: ' .. (pull_res.stderr or ''), vim.log.levels.ERROR)
               finish()
-            end)
-          end
+            end
+          end)
         end)
         return
       end
@@ -210,227 +332,43 @@ function M.sync_on_exit()
     end)
   end
 
-  local function do_commit_push()
-    git({ 'add', '-A' }, c.dir, function(add_res)
-      if add_res.code ~= 0 then
-        notify('git add failed: ' .. (add_res.stderr or ''), vim.log.levels.ERROR)
+  -- After a merge (or while one is in progress): if any conflicted file still has
+  -- markers, stop and let the user resolve it. Otherwise stage all resolutions
+  -- (incl. modify/delete files kept as-is) and commit the merge, then push.
+  do_resolve = function()
+    update_conflicts(c.dir, function(set)
+      local markers = {}
+      for path in pairs(set) do
+        if has_markers(path) then
+          markers[#markers + 1] = path
+        end
+      end
+      if #markers > 0 then
+        notify_conflict(markers)
         finish()
         return
       end
-      local msg = 'notes: ' .. os.date('%Y-%m-%d %H:%M')
-      git({ 'commit', '-m', msg }, c.dir, function(commit_res)
-        if commit_res.code ~= 0 then
-          -- "nothing to commit" goes to stdout not stderr; treat as success and check for push
-          local out = (commit_res.stdout or '') .. (commit_res.stderr or '')
-          if out:find('nothing to commit') or out:find('nothing added to commit') then
-            do_push()
-            return
-          end
-          notify('git commit failed: ' .. (commit_res.stderr or ''), vim.log.levels.ERROR)
-          finish()
-          return
-        end
-        do_push()
-      end)
+      commit_only(do_push)
     end)
   end
 
-  -- After a failed stash pop: show which files conflict and ask whether to
-  -- overwrite GitHub's version with the local one.
-  local function handle_stash_conflict()
-    git({ 'status', '--porcelain' }, c.dir, function(status_res)
-      local conflict_xy =
-        { DD = true, AU = true, UD = true, UA = true, DU = true, AA = true, UU = true }
-      local conflicts = {} -- array of { xy=…, file=… }
-      for line in (status_res.stdout or ''):gmatch('[^\n]+') do
-        local xy, fname = line:match('^(..)%s+(.+)')
-        if xy and conflict_xy[xy] then
-          conflicts[#conflicts + 1] = { xy = xy, file = fname }
-        end
-      end
+  -- already mid-merge (e.g. a save that resolved markers): finish the merge
+  if merging(c.dir) then
+    do_resolve()
+    return
+  end
 
-      if #conflicts == 0 then
-        -- pop failed for an unrecognised reason (e.g. untracked filename collision);
-        -- always drop the stash so it does not accumulate, then commit whatever changed
-        git({ 'stash', 'drop' }, c.dir, function()
-          do_commit_push()
-        end)
+  -- normal path: commit local edits, merge remote, then resolve/push
+  commit_only(function()
+    git({ 'ls-remote', '--heads', 'origin' }, c.dir, function(ls_res)
+      if ls_res.code ~= 0 or not ls_res.stdout or ls_res.stdout == '' then
+        -- no remote branches yet (fresh repo): push our commit and set upstream
+        do_push()
         return
       end
-
-      local names = table.concat(
-        vim.tbl_map(function(e)
-          return e.file
-        end, conflicts),
-        ', '
-      )
-      -- conflict dialog runs on the main thread (we are inside vim.schedule)
-      local choice = vim.fn.confirm(
-        '[notes.nvim] GitHub updated: ' .. names .. '\nLocal changes will overwrite. Push?',
-        '&Yes\n&No',
-        2
-      )
-
-      if choice == 1 then
-        -- keep local (stash = "theirs" in this stash-pop merge context)
-        --
-        -- UD/DD: the stash deleted the file; stage 3 is absent, so `checkout --theirs`
-        --   would fail with "does not have a theirs version". Use `git rm --force`
-        --   to stage the deletion explicitly.
-        -- other XY: `checkout --theirs` restores the stash (local) version.
-        local to_rm = {}
-        local to_co = {}
-        for _, e in ipairs(conflicts) do
-          if e.xy == 'UD' or e.xy == 'DD' then
-            to_rm[#to_rm + 1] = e.file
-          else
-            to_co[#to_co + 1] = e.file
-          end
-        end
-
-        local function after_resolved()
-          git({ 'stash', 'drop' }, c.dir, function()
-            do_commit_push()
-          end)
-        end
-
-        local function do_rm_then_done()
-          if #to_rm == 0 then
-            after_resolved()
-            return
-          end
-          git(vim.list_extend({ 'rm', '--force', '--' }, to_rm), c.dir, function(rm_res)
-            if rm_res.code ~= 0 then
-              notify('Conflict resolve failed: ' .. (rm_res.stderr or ''), vim.log.levels.ERROR)
-              finish()
-            else
-              after_resolved()
-            end
-          end)
-        end
-
-        if #to_co > 0 then
-          git(vim.list_extend({ 'checkout', '--theirs', '--' }, to_co), c.dir, function(co_res)
-            if co_res.code ~= 0 then
-              notify('Conflict resolve failed: ' .. (co_res.stderr or ''), vim.log.levels.ERROR)
-              finish()
-            else
-              do_rm_then_done()
-            end
-          end)
-        else
-          do_rm_then_done()
-        end
-      else
-        -- keep GitHub version: reset to the pulled state and drop the failed stash
-        git({ 'reset', '--hard', 'HEAD' }, c.dir, function()
-          git({ 'stash', 'drop' }, c.dir, function()
-            notify('Local changes discarded; kept GitHub version')
-            -- force-reload the editor buffer from disk (:edit! discards buffer changes)
-            local st = require('notes').state
-            if st.current_file and st.edit_win and vim.api.nvim_win_is_valid(st.edit_win) then
-              vim.api.nvim_win_call(st.edit_win, function()
-                vim.cmd('edit! ' .. vim.fn.fnameescape(st.current_file))
-              end)
-            end
-            finish()
-          end)
-        end)
-      end
-    end)
-  end
-
-  -- Fetch remote, then (if remote is ahead) stash → pull → pop before committing.
-  -- This guarantees the push never fails with "fetch first".
-  local function sync_with_remote_then_commit()
-    git({ 'fetch', 'origin' }, c.dir, function(fetch_res)
-      if fetch_res.code ~= 0 then
-        -- offline or unreachable; commit locally, push will fail with a clear error
-        do_commit_push()
-        return
-      end
-
-      git({ 'rev-list', 'HEAD..FETCH_HEAD', '--count' }, c.dir, function(ahead_res)
-        local ahead = tonumber(((ahead_res.stdout or ''):gsub('%s+', ''))) or 0
-
-        if ahead == 0 then
-          -- already in sync with remote
-          do_commit_push()
-          return
-        end
-
-        -- remote has new commits: stash local changes, pull, restore
-        git({ 'stash', 'push', '--include-untracked' }, c.dir, function(stash_res)
-          local nothing_stashed = (stash_res.stdout or ''):find('No local changes')
-
-          -- reapply the stashed working tree (if any), then commit/push.
-          -- Runs once the remote history is reconciled into local HEAD.
-          local function pop_and_commit()
-            if nothing_stashed then
-              do_commit_push()
-              return
-            end
-            git({ 'stash', 'pop' }, c.dir, function(pop_res)
-              if pop_res.code == 0 then
-                do_commit_push()
-              else
-                handle_stash_conflict()
-              end
-            end)
-          end
-
-          git({ 'pull', '--ff-only' }, c.dir, function(pull_res)
-            if pull_res.code == 0 then
-              pop_and_commit()
-              return
-            end
-
-            -- ff-only failed: local also has commits (diverged history). The tree is
-            -- clean now (changes are stashed), so rebase local commits onto remote.
-            git({ 'pull', '--rebase' }, c.dir, function(rebase_res)
-              if rebase_res.code == 0 then
-                pop_and_commit()
-                return
-              end
-              -- rebase hit a content conflict between committed histories: abort to
-              -- leave a clean tree, restore the stash, and report.
-              git({ 'rebase', '--abort' }, c.dir, function()
-                if nothing_stashed then
-                  notify('Sync failed: rebase conflict, resolve manually', vim.log.levels.ERROR)
-                  finish()
-                else
-                  git({ 'stash', 'pop' }, c.dir, function()
-                    notify('Sync failed: could not merge remote changes', vim.log.levels.ERROR)
-                    finish()
-                  end)
-                end
-              end)
-            end)
-          end)
-        end)
+      git({ 'pull', '--no-rebase', '--no-edit' }, c.dir, function()
+        do_resolve()
       end)
-    end)
-  end
-
-  -- check uncommitted changes
-  git({ 'status', '--porcelain' }, c.dir, function(status_res)
-    local has_changes = status_res.code == 0 and status_res.stdout and status_res.stdout ~= ''
-
-    if has_changes then
-      sync_with_remote_then_commit()
-      return
-    end
-
-    -- no local changes; check for unpushed commits
-    -- (rev-list non-zero exit = no upstream → push anyway)
-    git({ 'rev-list', '@{u}..HEAD', '--count' }, c.dir, function(ahead_res)
-      local trimmed = ((ahead_res.stdout or ''):gsub('%s+', ''))
-      local ahead = tonumber(trimmed)
-      if ahead_res.code ~= 0 or (ahead and ahead > 0) then
-        do_push()
-      else
-        finish()
-      end
     end)
   end)
 end

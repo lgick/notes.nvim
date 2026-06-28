@@ -41,6 +41,7 @@ M.state = {
   folders = nil, -- array of { name, folder }; folder nil = the virtual root "Notes" entry
   notes_all = nil, -- full scan: array of { file, folder, title, mtime, empty }
   items = nil, -- filtered notes for the current folder
+  conflicts = nil, -- set { [abs path] = true } of unmerged (conflicted) notes; nil = none
 }
 
 function M.is_open()
@@ -63,6 +64,7 @@ function M.is_open()
     st.items = nil
     st.notes_all = nil
     st.folders = nil
+    st.conflicts = nil
   end
   return false
 end
@@ -96,8 +98,11 @@ function M.open()
           if M.is_open() then
             picker.populate()
           end
-          -- push any local commits accumulated while offline
-          git.sync_on_exit()
+          -- push any local commits accumulated while offline; skip if pull left a
+          -- merge conflict to resolve (sync_on_exit would just re-warn about it)
+          if vim.uv.fs_stat(M.config.dir .. '/.git/MERGE_HEAD') == nil then
+            git.sync_on_exit()
+          end
         end)
       else
         M.state.synced = true

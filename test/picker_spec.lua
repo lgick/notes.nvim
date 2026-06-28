@@ -163,6 +163,109 @@ do
   notes.close()
 end
 
+-- ── conflict highlight: conflicted note row + its folder row get NotesConflict ─
+do
+  io.write('conflict highlight\n')
+  local dir = tmpdir()
+  writefile(dir .. '/Work/c1', { 'conflicted note' })
+
+  fresh_open(dir)
+  -- find the note inside Work and mark it conflicted
+  local cfile
+  for _, n in ipairs(notes.state.notes_all) do
+    if n.folder == 'Work' then
+      cfile = n.file
+    end
+  end
+  notes.state.conflicts = { [cfile] = true }
+  notes.state.current_folder = 'Work'
+  picker.filter()
+  picker.render_notes()
+  picker.render_folders()
+
+  local ns_conflict = api.nvim_create_namespace('notes_conflict')
+  local note_marks = api.nvim_buf_get_extmarks(notes.state.list_buf, ns_conflict, 0, -1, { details = true })
+  check('note row highlighted', #note_marks == 1, 'count=' .. #note_marks)
+  check('note row uses NotesConflict', note_marks[1] and note_marks[1][4].line_hl_group == 'NotesConflict')
+
+  -- the Work folder row must be highlighted too
+  local folder_row
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Work' then
+      folder_row = i - 1
+    end
+  end
+  local fmarks = api.nvim_buf_get_extmarks(notes.state.folders_buf, ns_conflict, 0, -1, { details = true })
+  local found = false
+  for _, m in ipairs(fmarks) do
+    if m[2] == folder_row and m[4].line_hl_group == 'NotesConflict' then
+      found = true
+    end
+  end
+  check('conflicted folder row highlighted', found)
+
+  notes.close()
+end
+
+-- ── conflicted notes/folders block destructive ops ───────────────────────────
+do
+  io.write('block ops on conflict\n')
+  local dir = tmpdir()
+  writefile(dir .. '/Work/c1', { 'conflicted note' })
+  fn.mkdir(dir .. '/Dest', 'p')
+  fn.writefile({}, dir .. '/Dest/.gitkeep')
+
+  fresh_open(dir)
+  local cfile
+  for _, n in ipairs(notes.state.notes_all) do
+    if n.folder == 'Work' then
+      cfile = n.file
+    end
+  end
+  notes.state.conflicts = { [cfile] = true }
+  notes.state.current_folder = 'Work'
+  picker.filter()
+  picker.render_notes()
+
+  -- delete_note must refuse (would otherwise prompt confirm=Yes and delete)
+  local orig_confirm = vim.fn.confirm
+  vim.fn.confirm = function() return 1 end
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.delete_note()
+  check('delete_note blocked', fn.filereadable(cfile) == 1)
+
+  -- cut + paste must refuse
+  picker.cut_note()
+  check('cut_note blocked (nothing marked)', notes.state.cut == nil)
+  notes.state.cut = cfile -- force a marked conflicted note
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Dest' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.paste_note()
+  check('paste_note blocked', fn.filereadable(cfile) == 1 and fn.filereadable(dir .. '/Dest/c1') == 0)
+  notes.state.cut = nil
+
+  -- rename_folder / delete_folder on the conflicted folder must refuse
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Work' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  local orig_input = vim.ui.input
+  vim.ui.input = function(_, cb) cb('Renamed') end
+  picker.rename_folder()
+  vim.ui.input = orig_input
+  check('rename_folder blocked', fn.isdirectory(dir .. '/Work') == 1 and fn.isdirectory(dir .. '/Renamed') == 0)
+
+  picker.delete_folder()
+  check('delete_folder blocked', fn.isdirectory(dir .. '/Work') == 1)
+  vim.fn.confirm = orig_confirm
+
+  notes.close()
+end
+
 -- ── create_folder writes .gitkeep ────────────────────────────────────────────
 do
   io.write('create folder\n')

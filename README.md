@@ -29,7 +29,8 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 - **Instant UI updates** — the note list updates immediately on `:w` (sort order, title); git sync runs in the background.
 - **Full management** — same keys in each column: `a` creates (a note in the notes column, a folder in the folders column), `d` deletes; notes also support move (`x` + `p`), folders also support rename (`r`); refresh (`R`). **Every create/delete/move/rename immediately commits and pushes to GitHub.**
 - **Configurable keymaps** — every action, the close key, and panel-focus keys are remappable via `config.keys`.
-- **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull --rebase --autostash`. On `:w`: commit+push. On any create/delete/move/rename: immediate commit+push. On close (`q`): commit+push of any remaining changes.
+- **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull` (merge). On `:w`: commit + merge + push. On any create/delete/move/rename: immediate commit + merge + push. On close (`q`): commit + merge + push of any remaining changes.
+- **Conflicts stay in the file** — a merge conflict is left as standard git markers in the note (no dialog). The conflicted note and its folder are highlighted in red; edit the markers out, save, and the merge completes and pushes. Move/rename/delete of a conflicted note is blocked until you resolve it.
 - **Unsaved changes prompt** — pressing `q` when the editor has unsaved changes shows a **Save / Discard / Cancel** dialog instead of silently writing or discarding. Choosing **Discard** reloads the saved version from disk.
 - **Crash-safe** — on every open, tracked files deleted outside the plugin (e.g. an accidental `rm`) are restored from the last commit before anything is pushed, so an empty working tree never propagates to the remote.
 - **No external dependencies** — pure Lua, no third-party plugins required.
@@ -166,6 +167,7 @@ Override these to customize colors (they link to sensible defaults):
 | `NotesActive` | `CursorLine` | the currently open note in the notes column |
 | `NotesDirActive` | computed | the selected folder in the folders column |
 | `NotesCut` | `Visual` | the note marked for moving (`x`) |
+| `NotesConflict` | `ErrorMsg` | a note in a merge conflict, and its folder row |
 
 `NotesDirActive` is computed at open time from the resolved colors of `Directory` (fg) and `CursorLine` (bg), combining the folder color with the selection background. Override it with an explicit `nvim_set_hl` call in your config after setup.
 
@@ -196,22 +198,27 @@ Each note is an ID-named `.md` file; its title in the list is read from the firs
 | Event | Action |
 |-------|--------|
 | Every open | Restore tracked files deleted outside the plugin (`git checkout -- <deleted>`) |
-| First `:Notes` per session | `git clone` if missing, then `git pull --rebase --autostash` |
+| First `:Notes` per session | `git clone` if missing, then `git pull` (merge) |
 | Subsequent `:Notes` | Restore only; no network call (already synced) |
-| Saving a file (`:w`) | UI refreshes instantly; then fetch → reconcile → `git add -A` → `git commit` → `git push` |
-| Create / delete / move / rename | Immediate fetch → reconcile → `git add -A` → `git commit` → `git push` |
-| Closing notes (`q`) | Optionally saves the open buffer, then fetch → reconcile → `git add -A` → `git commit` → `git push` |
+| Saving a file (`:w`) | UI refreshes instantly; then `git commit` → `git pull` (merge) → `git push` |
+| Create / delete / move / rename | Immediate `git commit` → `git pull` (merge) → `git push` |
+| Closing notes (`q`) | Optionally saves the open buffer, then `git commit` → `git pull` (merge) → `git push` |
 
-**Reconcile** means: if the remote is ahead, `git stash push` → `git pull --ff-only` → `git stash pop`. If the pop produces a conflict, a dialog appears:
+### Conflicts
+
+There are **no dialogs**. When a `git pull` can't merge cleanly, the conflict is left in the note as standard git markers and the repository enters a normal "merging" state:
 
 ```
-[notes.nvim] GitHub updated: work/todo.md
-Local changes will overwrite. Push?
-[Yes] [No]
+<<<<<<< HEAD
+your local line
+=======
+the version from GitHub
+>>>>>>> origin/main
 ```
 
-- **Yes** — your local version is kept and pushed to GitHub. This handles all conflict types: `UU` (both modified), `DU` (GitHub deleted, you modified), `UD` (GitHub modified, you deleted), etc. The file list refreshes automatically.
-- **No** — your local changes are discarded; the editor reloads the GitHub version from disk and the file list refreshes automatically.
+The conflicted note — and the folder that contains it — are highlighted in red (`NotesConflict`) in the two columns, so you can see exactly which notes need attention. To resolve: open the note, edit the markers out, and save (`:w`). That completes the merge and pushes. A half-resolved note (markers still present) is never committed.
+
+While a note is in conflict, **move / rename / delete** of it (or its folder) is blocked with a `Resolve the conflict first` message — moving a file mid-merge would corrupt git's index. A modify/delete conflict (one side edited, the other deleted) auto-resolves by keeping the surviving file, so sync never deadlocks.
 
 Multiple rapid CRUD actions are serialised: at most one git chain runs at a time, with one queued follow-up that captures everything that accumulated while the first chain was in flight.
 

@@ -10,6 +10,7 @@ local ns = api.nvim_create_namespace('notes_list')
 local ns_active = api.nvim_create_namespace('notes_active')
 local ns_folders = api.nvim_create_namespace('notes_folders')
 local ns_title = api.nvim_create_namespace('notes_title')
+local ns_conflict = api.nvim_create_namespace('notes_conflict')
 
 local EMPTY_TITLE = 'New Note'
 local ROOT_LABEL = 'Notes' -- virtual folder for notes that live at the repo root
@@ -22,12 +23,41 @@ local function state()
   return require('notes').state
 end
 
+-- True when the note at `file` is currently in a merge conflict.
+local function is_conflicted(file)
+  return (state().conflicts or {})[file] ~= nil
+end
+M.is_conflicted = is_conflicted
+
+-- True when any note inside `folder` (real folder name) is in a merge conflict.
+local function folder_has_conflict(folder)
+  local st = state()
+  if not st.conflicts then
+    return false
+  end
+  for _, n in ipairs(st.notes_all or {}) do
+    if n.folder == folder and st.conflicts[n.file] then
+      return true
+    end
+  end
+  return false
+end
+
+local function notify_conflict_block()
+  vim.notify('[notes.nvim] Resolve the conflict first', vim.log.levels.WARN)
+end
+
 local function sync()
   local c = cfg()
   if c.repo ~= '' then
     -- Stage changes immediately (local, no network) so that restore() on the next
     -- open() does not undo in-flight deletions while git fetch is pending offline.
-    if fn.isdirectory(c.dir .. '/.git') == 1 then
+    -- Skipped during a merge: `git add -A` would stage marker files and silently
+    -- clear their unmerged status (sync_on_exit handles the merge itself).
+    if
+      fn.isdirectory(c.dir .. '/.git') == 1
+      and vim.uv.fs_stat(c.dir .. '/.git/MERGE_HEAD') == nil
+    then
       vim.system({ 'git', 'add', '-A' }, { cwd = c.dir }):wait()
     end
     require('notes.git').sync_on_exit()
@@ -173,10 +203,30 @@ function M.render_folders()
   api.nvim_buf_set_lines(st.folders_buf, 0, -1, false, lines)
   vim.bo[st.folders_buf].modifiable = false
 
+  -- folders (by folder key, '' = root) that contain at least one conflicted note
+  local conflicted = {}
+  if st.conflicts then
+    for _, note in ipairs(st.notes_all or {}) do
+      if st.conflicts[note.file] then
+        conflicted[note.folder] = true
+      end
+    end
+  end
+
   api.nvim_buf_clear_namespace(st.folders_buf, ns_folders, 0, -1)
+  api.nvim_buf_clear_namespace(st.folders_buf, ns_conflict, 0, -1)
   for i, f in ipairs(st.folders or {}) do
     local hl = f.folder == st.current_folder and 'NotesDirActive' or 'NotesDir'
     api.nvim_buf_set_extmark(st.folders_buf, ns_folders, i - 1, 0, { line_hl_group = hl })
+    if conflicted[f.folder or ''] then
+      api.nvim_buf_set_extmark(
+        st.folders_buf,
+        ns_conflict,
+        i - 1,
+        0,
+        { line_hl_group = 'NotesConflict', priority = 300 }
+      )
+    end
   end
 end
 
@@ -226,6 +276,7 @@ function M.render_notes()
 
   api.nvim_buf_clear_namespace(st.list_buf, ns, 0, -1)
   api.nvim_buf_clear_namespace(st.list_buf, ns_title, 0, -1)
+  api.nvim_buf_clear_namespace(st.list_buf, ns_conflict, 0, -1)
   if not empty then
     local prefix = 13 -- len("dd.mm.yyyy - ")
     for i, it in ipairs(st.items) do
@@ -235,6 +286,16 @@ function M.render_notes()
         hl_mode = 'combine',
         priority = 100,
       })
+      if is_conflicted(it.file) then
+        -- full-line error highlight; priority above Title/Active/Cut so it always shows
+        api.nvim_buf_set_extmark(
+          st.list_buf,
+          ns_conflict,
+          i - 1,
+          0,
+          { line_hl_group = 'NotesConflict', priority = 300 }
+        )
+      end
       if it.file == st.cut then
         -- hl_group over the text only (not full width); priority > NotesActive (0)
         api.nvim_buf_set_extmark(
@@ -402,6 +463,10 @@ function M.rename_folder()
       vim.notify('[notes.nvim] Nested folders are not supported', vim.log.levels.WARN)
       return
     end
+    if folder_has_conflict(f.folder) then
+      notify_conflict_block()
+      return
+    end
     local dir = cfg().dir
     local oldp = dir .. '/' .. f.folder
     local newp = dir .. '/' .. input
@@ -445,6 +510,10 @@ function M.delete_note()
   if not it then
     return
   end
+  if is_conflicted(it.file) then
+    notify_conflict_block()
+    return
+  end
 
   local choice = fn.confirm('Delete "' .. it.title .. '"?', '&Yes\n&No', 2)
   if choice ~= 1 then
@@ -465,6 +534,10 @@ function M.delete_folder()
     return
   end
 
+  if folder_has_conflict(f.folder) then
+    notify_conflict_block()
+    return
+  end
   local prompt = 'Delete folder "' .. f.folder .. '" and all its notes?'
   if fn.confirm(prompt, '&Yes\n&No', 2) ~= 1 then
     return
@@ -488,6 +561,10 @@ function M.cut_note()
   if not it then
     return
   end
+  if is_conflicted(it.file) then
+    notify_conflict_block()
+    return
+  end
   state().cut = it.file
   M.render_notes()
   vim.notify('[notes.nvim] Navigate to a folder and press ' .. cfg().keys.paste)
@@ -505,6 +582,10 @@ end
 function M.paste_note()
   local st = state()
   if not st.cut then
+    return
+  end
+  if is_conflicted(st.cut) then
+    notify_conflict_block()
     return
   end
 

@@ -43,6 +43,7 @@ local function setup_highlights()
   api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'Visual' })
   api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'CursorLine' })
   api.nvim_set_hl(0, 'NotesTitle', { default = true, bold = true })
+  api.nvim_set_hl(0, 'NotesConflict', { default = true, link = 'ErrorMsg' })
   -- NotesDirActive: Directory fg (blue) on CursorLine bg — for the selected folder row.
   -- No standard group combines both, so we compute it from the resolved colors.
   local dir = api.nvim_get_hl(0, { name = 'Directory', link = false })
@@ -372,6 +373,7 @@ function M.close()
   st.items = nil
   st.notes_all = nil
   st.folders = nil
+  st.conflicts = nil
 
   if _old_tabline ~= nil then
     vim.o.tabline = _old_tabline

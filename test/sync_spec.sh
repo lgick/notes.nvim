@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# GitHub-sync scenario tests. For each case we build a bare "remote" plus two
-# clones (A = the plugin's dir, B = a second machine), mutate via B, then drive
-# the plugin's sync/pull/restore on A through test/sync_driver.lua and assert the
-# resulting git/worktree state.
+# GitHub-sync scenario tests for the MERGE conflict model. For each case we build a
+# bare "remote" plus two clones (A = the plugin's dir, B = a second machine), mutate
+# via B, then drive the plugin's sync/pull/restore on A through test/sync_driver.lua
+# and assert the resulting git/worktree state.
+#
+# Conflicts are NOT resolved by a dialog: a conflict is left as standard git markers
+# in the file (repo enters MERGING). Resolving = remove the markers and sync again.
 #
 # Run from the repo root: bash test/sync_spec.sh   (or via test/run.sh)
 
@@ -25,10 +28,10 @@ gconf() {
   git -C "$1" config commit.gpgsign false
 }
 
-# action  [confirm]   — run the driver against A
+# action   — run the driver against A
 drive() {
-  local action="$1" confirm="${2:-1}"
-  NOTES_DIR="$A" NOTES_REMOTE="$REMOTE" NOTES_CONFIRM="$confirm" \
+  local action="$1"
+  NOTES_DIR="$A" NOTES_REMOTE="$REMOTE" \
     "$NVIM" --headless -l "$REPO_ROOT/test/sync_driver.lua" "$action" \
     >/dev/null 2>"$ROOT/driver.err"
   return $?
@@ -51,8 +54,12 @@ setup() { # creates REMOTE + A (with an initial commit pushed) + B
 
 teardown() { rm -rf "$ROOT"; }
 
-rebase_in_progress() { # 0 if a rebase is mid-flight in A
-  [ -d "$A/.git/rebase-merge" ] || [ -d "$A/.git/rebase-apply" ]
+merging() { # echo yes/no whether a merge is in progress in A
+  [ -f "$A/.git/MERGE_HEAD" ] && echo yes || echo no
+}
+
+has_markers() { # echo yes/no whether $A/$1 contains conflict markers
+  grep -q '^<<<<<<< ' "$A/$1" 2>/dev/null && echo yes || echo no
 }
 
 remote_file() { # print a file's content as it exists on the remote HEAD
@@ -70,33 +77,41 @@ s1() {
   teardown
 }
 
-# ── S2: remote & local edit the SAME file → conflict dialog (Yes / No) ────────
-s2_yes() {
-  echo 'S2a: same-file conflict, choose Yes (keep local)'
+# ── S2: remote & local edit the SAME file → markers left, resolve by editing ──
+s2() {
+  echo 'S2: same-file conflict → markers in file, then resolve + push'
   setup
   printf 'hello\nREMOTE\n' >"$B/note.txt"; gitq "$B" add -A; gitq "$B" commit -m r; gitq "$B" push
   printf 'hello\nLOCAL\n' >"$A/note.txt"   # uncommitted local edit, same line
-  drive sync 1
+  drive sync
   check 'driver ok' 0 $?
-  check 'local kept on disk' "$(printf 'hello\nLOCAL')" "$(cat "$A/note.txt")"
-  check 'local pushed to remote' "$(printf 'hello\nLOCAL')" "$(remote_file note.txt)"
+  check 'merge in progress' 'yes' "$(merging)"
+  check 'file has conflict markers' 'yes' "$(has_markers note.txt)"
+  check 'remote NOT pushed (still REMOTE)' "$(printf 'hello\nREMOTE')" "$(remote_file note.txt)"
+
+  # user resolves the markers in the editor and saves → sync again
+  printf 'hello\nLOCAL\nREMOTE\n' >"$A/note.txt"
+  drive sync
+  check 'driver ok (resolve)' 0 $?
+  check 'merge finished' 'no' "$(merging)"
+  check 'resolved content pushed' "$(printf 'hello\nLOCAL\nREMOTE')" "$(remote_file note.txt)"
   check 'tree clean' '' "$(git -C "$A" status --porcelain)"
-  check 'no stash left' '' "$(git -C "$A" stash list)"
   teardown
 }
 
-s2_no() {
-  echo 'S2b: same-file conflict, choose No (keep remote)'
+# ── S2-guard: leaving markers in place must NOT commit ────────────────────────
+s2_guard() {
+  echo 'S2-guard: unresolved markers → no commit, still MERGING'
   setup
   printf 'hello\nREMOTE\n' >"$B/note.txt"; gitq "$B" add -A; gitq "$B" commit -m r; gitq "$B" push
-  local before; before="$(git -C "$REMOTE" rev-parse HEAD)"
   printf 'hello\nLOCAL\n' >"$A/note.txt"
-  drive sync 2
+  drive sync                                  # creates the conflict
+  local before; before="$(git -C "$REMOTE" rev-parse HEAD)"
+  drive sync                                  # markers still present
   check 'driver ok' 0 $?
-  check 'remote version on disk' "$(printf 'hello\nREMOTE')" "$(cat "$A/note.txt")"
-  check 'tree clean' '' "$(git -C "$A" status --porcelain)"
-  check 'no stash left' '' "$(git -C "$A" stash list)"
-  check 'remote unchanged (no push)' "$before" "$(git -C "$REMOTE" rev-parse HEAD)"
+  check 'still merging' 'yes' "$(merging)"
+  check 'markers still present' 'yes' "$(has_markers note.txt)"
+  check 'remote unchanged (no commit pushed)' "$before" "$(git -C "$REMOTE" rev-parse HEAD)"
   teardown
 }
 
@@ -106,8 +121,9 @@ s3() {
   setup
   printf 'hello\nREMOTE\n' >"$B/note.txt"; gitq "$B" add -A; gitq "$B" commit -m r; gitq "$B" push
   printf 'second\nLOCAL\n' >"$A/a2.txt"    # uncommitted edit to a different file
-  drive sync 1
+  drive sync
   check 'driver ok' 0 $?
+  check 'no conflict' 'no' "$(merging)"
   check 'remote edit merged in' "$(printf 'hello\nREMOTE')" "$(cat "$A/note.txt")"
   check 'local edit preserved' "$(printf 'second\nLOCAL')" "$(cat "$A/a2.txt")"
   check 'local edit pushed' "$(printf 'second\nLOCAL')" "$(remote_file a2.txt)"
@@ -126,32 +142,33 @@ s4() {
   teardown
 }
 
-# ── S5: diverged history (local commit + remote commit) + dirty (G2) ─────────
+# ── S5: diverged history (local commit + remote commit) + dirty ──────────────
 s5() {
-  echo 'S5: diverged history + uncommitted local change → rebase-after-stash'
+  echo 'S5: diverged history + uncommitted local change → merge'
   setup
   printf 'C\n' >"$A/c.txt"; gitq "$A" add -A; gitq "$A" commit -m c   # local-ahead, unpushed
   printf 'D\n' >"$B/d.txt"; gitq "$B" add -A; gitq "$B" commit -m d; gitq "$B" push  # remote-ahead
   printf 'hello\ndirty\n' >"$A/note.txt"   # uncommitted local change (independent)
-  drive sync 1
+  drive sync
   check 'driver ok' 0 $?
+  check 'no conflict' 'no' "$(merging)"
   check 'local commit pushed' 'C' "$(remote_file c.txt)"
   check 'remote commit present locally' 'D' "$(cat "$A/d.txt" 2>/dev/null)"
   check 'dirty change committed+pushed' "$(printf 'hello\ndirty')" "$(remote_file note.txt)"
   check 'tree clean' '' "$(git -C "$A" status --porcelain)"
-  check 'no rebase in progress' 1 "$(rebase_in_progress; echo $?)"
   teardown
 }
 
-# ── S6: clean tree, local-ahead commit, remote advanced → push-reject retry (G3)
+# ── S6: clean tree, local-ahead commit, remote advanced → merge + push ───────
 s6() {
-  echo 'S6: clean local-ahead + remote advanced → self-healing push'
+  echo 'S6: clean local-ahead + remote advanced → merge and push'
   setup
   printf 'E\n' >"$A/e.txt"; gitq "$A" add -A; gitq "$A" commit -m e   # local-ahead, clean tree
   printf 'F\n' >"$B/f.txt"; gitq "$B" add -A; gitq "$B" commit -m f; gitq "$B" push
-  drive sync 1
+  drive sync
   check 'driver ok' 0 $?
-  check 'local commit pushed after rebase' 'E' "$(remote_file e.txt)"
+  check 'no conflict' 'no' "$(merging)"
+  check 'local commit pushed' 'E' "$(remote_file e.txt)"
   check 'remote commit present locally' 'F' "$(cat "$A/f.txt" 2>/dev/null)"
   check 'tree clean' '' "$(git -C "$A" status --porcelain)"
   teardown
@@ -169,52 +186,36 @@ s7() {
   teardown
 }
 
-# ── S8: pull rebase conflict on open → rebase --abort leaves clean tree (G1) ──
+# ── S8: same-file conflict on OPEN (pull) → markers left, local intact ────────
 s8() {
-  echo 'S8: pull rebase conflict → rebase --abort, no broken state'
+  echo 'S8: pull conflict on open → markers in file, no broken state'
   setup
   printf 'hello\nLOCAL\n' >"$A/note.txt"; gitq "$A" add -A; gitq "$A" commit -m local   # unpushed, conflicts
   printf 'hello\nREMOTE\n' >"$B/note.txt"; gitq "$B" add -A; gitq "$B" commit -m remote; gitq "$B" push
-  local head_before; head_before="$(git -C "$A" rev-parse HEAD)"
   drive pull
   check 'driver ok' 0 $?
-  check 'no rebase in progress' 1 "$(rebase_in_progress; echo $?)"
-  check 'local commit intact (rebase aborted)' "$head_before" "$(git -C "$A" rev-parse HEAD)"
-  check 'local content intact' "$(printf 'hello\nLOCAL')" "$(cat "$A/note.txt")"
-  check 'tree clean (no conflict markers)' '' "$(git -C "$A" status --porcelain)"
+  check 'merge in progress' 'yes' "$(merging)"
+  check 'file has conflict markers' 'yes' "$(has_markers note.txt)"
+  check 'no rebase dir left' 'gone' "$([ -d "$A/.git/rebase-merge" ] || [ -d "$A/.git/rebase-apply" ] && echo exists || echo gone)"
   teardown
 }
 
-# ── S9: UD conflict (remote modified, local deleted) → git rm resolves ────────
-s9_yes() {
-  echo 'S9a: UD conflict (remote modified, local deleted), Yes → deletion propagated'
+# ── S9: modify/delete (remote modified, local deleted) → auto-keep remote ─────
+s9() {
+  echo 'S9: modify/delete conflict → auto-resolves to keep the modified file'
   setup
   printf 'hello\nREMOTE\n' >"$B/note.txt"; gitq "$B" add -A; gitq "$B" commit -m r; gitq "$B" push
   rm "$A/note.txt"   # uncommitted local deletion
-  drive sync 1       # Yes: keep local (deletion wins, push the rm)
+  drive sync
   check 'driver ok' 0 $?
-  check 'local deletion kept on disk' 'gone' "$([ -e "$A/note.txt" ] && echo exists || echo gone)"
+  check 'merge finished' 'no' "$(merging)"
+  check 'modified file kept on disk' "$(printf 'hello\nREMOTE')" "$(cat "$A/note.txt" 2>/dev/null)"
+  check 'kept file pushed' "$(printf 'hello\nREMOTE')" "$(remote_file note.txt)"
   check 'tree clean' '' "$(git -C "$A" status --porcelain)"
-  check 'no stash left' '' "$(git -C "$A" stash list)"
   teardown
 }
 
-s9_no() {
-  echo 'S9b: UD conflict (remote modified, local deleted), No → remote version restored'
-  setup
-  printf 'hello\nREMOTE\n' >"$B/note.txt"; gitq "$B" add -A; gitq "$B" commit -m r; gitq "$B" push
-  local before; before="$(git -C "$REMOTE" rev-parse HEAD)"
-  rm "$A/note.txt"
-  drive sync 2       # No: keep remote (GitHub version)
-  check 'driver ok' 0 $?
-  check 'remote version restored on disk' "$(printf 'hello\nREMOTE')" "$(cat "$A/note.txt" 2>/dev/null)"
-  check 'tree clean' '' "$(git -C "$A" status --porcelain)"
-  check 'no stash left' '' "$(git -C "$A" stash list)"
-  check 'remote unchanged (no push)' "$before" "$(git -C "$REMOTE" rev-parse HEAD)"
-  teardown
-}
-
-s1; s2_yes; s2_no; s3; s4; s5; s6; s7; s8; s9_yes; s9_no
+s1; s2; s2_guard; s3; s4; s5; s6; s7; s8; s9
 
 echo
 if [ "$fails" -gt 0 ]; then
