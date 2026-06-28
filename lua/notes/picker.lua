@@ -142,8 +142,18 @@ function M.render_folders()
   end
 
   local lines = {}
-  for _, f in ipairs(st.folders or {}) do
-    lines[#lines + 1] = f.name
+  local folders = st.folders or {}
+  local n = #folders
+  for i, f in ipairs(folders) do
+    local line
+    if i == 1 then
+      line = f.name .. '/'
+    elseif i == n then
+      line = '└─ ' .. f.name .. '/'
+    else
+      line = '├─ ' .. f.name .. '/'
+    end
+    lines[#lines + 1] = line
   end
 
   vim.bo[st.folders_buf].modifiable = true

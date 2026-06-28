@@ -8,9 +8,9 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 ```
 ──────────────┬──────────────────────────────────
  Folders      │ Notes                            ← statuslines
- Notes         │ 26.06.2026 - Shopping list
- Work          │ 25.06.2026 - Project idea
- Personal      │ 24.06.2026 - Report
+ Notes/        │ 26.06.2026 - Shopping list
+ ├─ Work/      │ 25.06.2026 - Project idea
+ └─ Personal/  │ 24.06.2026 - Report
 ──────────────┴──────────────────────────────────
  Editor                                           ← statusline
  # Shopping list
