@@ -96,6 +96,8 @@ function M.open()
           if M.is_open() then
             picker.populate()
           end
+          -- push any local commits accumulated while offline
+          git.sync_on_exit()
         end)
       else
         M.state.synced = true
