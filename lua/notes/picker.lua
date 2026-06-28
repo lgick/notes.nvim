@@ -87,11 +87,18 @@ function M.scan()
     return a.mtime > b.mtime
   end)
 
-  -- folder recency = mtime of its most recently modified note
+  -- folder recency = mtime of its most recently modified note;
+  -- empty folders fall back to the directory's own mtime (≈ creation time).
   local fm = {}
   for _, n in ipairs(notes) do
     if n.folder ~= '' then
       fm[n.folder] = math.max(fm[n.folder] or 0, n.mtime)
+    end
+  end
+  for _, name in ipairs(real) do
+    if not fm[name] then
+      local s = vim.uv.fs_stat(dir .. '/' .. name)
+      fm[name] = s and s.mtime.sec or 0
     end
   end
   table.sort(real, function(a, b)
