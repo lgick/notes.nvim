@@ -219,13 +219,16 @@ function M.render_folders()
     local hl = f.folder == st.current_folder and 'NotesDirActive' or 'NotesDir'
     api.nvim_buf_set_extmark(st.folders_buf, ns_folders, i - 1, 0, { line_hl_group = hl })
     if conflicted[f.folder or ''] then
-      api.nvim_buf_set_extmark(
-        st.folders_buf,
-        ns_conflict,
-        i - 1,
-        0,
-        { line_hl_group = 'NotesConflict', priority = 300 }
-      )
+      -- hl_group (combine) over the row text, NOT line_hl_group: the folder row
+      -- already has a line_hl_group (NotesDir/Active) at the default extmark
+      -- priority (4096), which would hide a lower-priority line_hl_group. An
+      -- hl_group is a separate layer and combines with it regardless.
+      api.nvim_buf_set_extmark(st.folders_buf, ns_conflict, i - 1, 0, {
+        end_col = #lines[i],
+        hl_group = 'NotesConflict',
+        hl_mode = 'combine',
+        priority = 300,
+      })
     end
   end
 end
@@ -287,14 +290,14 @@ function M.render_notes()
         priority = 100,
       })
       if is_conflicted(it.file) then
-        -- full-line error highlight; priority above Title/Active/Cut so it always shows
-        api.nvim_buf_set_extmark(
-          st.list_buf,
-          ns_conflict,
-          i - 1,
-          0,
-          { line_hl_group = 'NotesConflict', priority = 300 }
-        )
+        -- wavy error underline over the row text; combine so it overlays the title
+        -- color/bold rather than replacing them, priority above Title/Active/Cut
+        api.nvim_buf_set_extmark(st.list_buf, ns_conflict, i - 1, 0, {
+          end_col = #lines[i],
+          hl_group = 'NotesConflict',
+          hl_mode = 'combine',
+          priority = 300,
+        })
       end
       if it.file == st.cut then
         -- hl_group over the text only (not full width); priority > NotesActive (0)

@@ -30,7 +30,7 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 - **Full management** — same keys in each column: `a` creates (a note in the notes column, a folder in the folders column), `d` deletes; notes also support move (`x` + `p`), folders also support rename (`r`); refresh (`R`). **Every create/delete/move/rename immediately commits and pushes to GitHub.**
 - **Configurable keymaps** — every action, the close key, and panel-focus keys are remappable via `config.keys`.
 - **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull` (merge). On `:w`: commit + merge + push. On any create/delete/move/rename: immediate commit + merge + push. On close (`q`): commit + merge + push of any remaining changes.
-- **Conflicts stay in the file** — a merge conflict is left as standard git markers in the note (no dialog). The conflicted note and its folder are highlighted in red; edit the markers out, save, and the merge completes and pushes. Move/rename/delete of a conflicted note is blocked until you resolve it.
+- **Conflicts stay in the file** — a merge conflict is left as standard git markers in the note (no dialog). The conflicted note title and its folder name get a wavy error underline; edit the markers out, save, and the merge completes and pushes. Move/rename/delete of a conflicted note is blocked until you resolve it.
 - **Unsaved changes prompt** — pressing `q` when the editor has unsaved changes shows a **Save / Discard / Cancel** dialog instead of silently writing or discarding. Choosing **Discard** reloads the saved version from disk.
 - **Crash-safe** — on every open, tracked files deleted outside the plugin (e.g. an accidental `rm`) are restored from the last commit before anything is pushed, so an empty working tree never propagates to the remote.
 - **No external dependencies** — pure Lua, no third-party plugins required.
@@ -167,7 +167,7 @@ Override these to customize colors (they link to sensible defaults):
 | `NotesActive` | `CursorLine` | the currently open note in the notes column |
 | `NotesDirActive` | computed | the selected folder in the folders column |
 | `NotesCut` | `Visual` | the note marked for moving (`x`) |
-| `NotesConflict` | `ErrorMsg` | a note in a merge conflict, and its folder row |
+| `NotesConflict` | undercurl, `sp` from `DiagnosticError` | wavy error underline on a note in a merge conflict, and on its folder |
 
 `NotesDirActive` is computed at open time from the resolved colors of `Directory` (fg) and `CursorLine` (bg), combining the folder color with the selection background. Override it with an explicit `nvim_set_hl` call in your config after setup.
 
@@ -216,7 +216,7 @@ the version from GitHub
 >>>>>>> origin/main
 ```
 
-The conflicted note — and the folder that contains it — are highlighted in red (`NotesConflict`) in the two columns, so you can see exactly which notes need attention. To resolve: open the note, edit the markers out, and save (`:w`). That completes the merge and pushes. A half-resolved note (markers still present) is never committed.
+The conflicted note title — and the name of the folder that contains it — get a wavy underline in the error color (`NotesConflict`) in the two columns, so you can see exactly which notes need attention. To resolve: open the note, edit the markers out, and save (`:w`). That completes the merge and pushes. A half-resolved note (markers still present) is never committed.
 
 While a note is in conflict, **move / rename / delete** of it (or its folder) is blocked with a `Resolve the conflict first` message — moving a file mid-merge would corrupt git's index. A modify/delete conflict (one side edited, the other deleted) auto-resolves by keeping the surviving file, so sync never deadlocks.
 

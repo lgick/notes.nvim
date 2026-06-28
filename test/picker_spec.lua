@@ -186,7 +186,7 @@ do
   local ns_conflict = api.nvim_create_namespace('notes_conflict')
   local note_marks = api.nvim_buf_get_extmarks(notes.state.list_buf, ns_conflict, 0, -1, { details = true })
   check('note row highlighted', #note_marks == 1, 'count=' .. #note_marks)
-  check('note row uses NotesConflict', note_marks[1] and note_marks[1][4].line_hl_group == 'NotesConflict')
+  check('note row uses NotesConflict', note_marks[1] and note_marks[1][4].hl_group == 'NotesConflict')
 
   -- the Work folder row must be highlighted too
   local folder_row
@@ -198,7 +198,7 @@ do
   local fmarks = api.nvim_buf_get_extmarks(notes.state.folders_buf, ns_conflict, 0, -1, { details = true })
   local found = false
   for _, m in ipairs(fmarks) do
-    if m[2] == folder_row and m[4].line_hl_group == 'NotesConflict' then
+    if m[2] == folder_row and m[4].hl_group == 'NotesConflict' then
       found = true
     end
   end

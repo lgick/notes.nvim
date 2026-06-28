@@ -43,7 +43,20 @@ local function setup_highlights()
   api.nvim_set_hl(0, 'NotesCut', { default = true, link = 'Visual' })
   api.nvim_set_hl(0, 'NotesActive', { default = true, link = 'CursorLine' })
   api.nvim_set_hl(0, 'NotesTitle', { default = true, bold = true })
-  api.nvim_set_hl(0, 'NotesConflict', { default = true, link = 'ErrorMsg' })
+  -- wavy underline (undercurl) in the error color over the note/folder name.
+  -- sp drives the curl color; take it from DiagnosticError (fall back to ErrorMsg),
+  -- so we get a *wavy* line regardless of whether the colorscheme's diagnostic
+  -- underline groups use plain underline.
+  local err = api.nvim_get_hl(0, { name = 'DiagnosticError', link = false })
+  if not (err and err.fg) then
+    err = api.nvim_get_hl(0, { name = 'ErrorMsg', link = false })
+  end
+  api.nvim_set_hl(0, 'NotesConflict', {
+    default = true,
+    undercurl = true,
+    sp = err and err.fg or nil,
+    cterm = { undercurl = true },
+  })
   -- NotesDirActive: Directory fg (blue) on CursorLine bg — for the selected folder row.
   -- No standard group combines both, so we compute it from the resolved colors.
   local dir = api.nvim_get_hl(0, { name = 'Directory', link = false })
