@@ -5,6 +5,8 @@
 Лёгкий плагин для Neovim, который ведёт заметки в отдельной вкладке — по образу
 приложения **macOS Notes** — с опциональной синхронизацией с GitHub через Git (SSH).
 
+<video src="https://github.com/user-attachments/assets/7ff882ff-7cfc-4739-8765-e9e4ddc6fd5f" autoplay loop muted playsinline></video>
+
 ```
 ──────────────┬──────────────────────────────────
  Folders      │ Notes                            ← статуслайны
@@ -18,8 +20,6 @@
  - [ ] Молоко
  - [ ] Позвонить в банк
 ```
-
-<video src="https://github.com/user-attachments/assets/7ff882ff-7cfc-4739-8765-e9e4ddc6fd5f" autoplay loop muted playsinline></video>
 
 ## Возможности
 
