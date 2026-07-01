@@ -49,17 +49,25 @@ end
 
 local function sync()
   local c = cfg()
-  if c.repo ~= '' then
-    -- Stage changes immediately (local, no network) so that restore() on the next
-    -- open() does not undo in-flight deletions while git fetch is pending offline.
-    -- Skipped during a merge: `git add -A` would stage marker files and silently
-    -- clear their unmerged status (sync_on_exit handles the merge itself).
-    if
-      fn.isdirectory(c.dir .. '/.git') == 1
-      and vim.uv.fs_stat(c.dir .. '/.git/MERGE_HEAD') == nil
-    then
-      vim.system({ 'git', 'add', '-A' }, { cwd = c.dir }):wait()
-    end
+  if c.repo == '' then
+    return
+  end
+  -- Stage changes (local, no network) so that restore() on the next open() does not
+  -- undo an in-flight deletion. Done ASYNC (no :wait) so the UI never blocks during
+  -- sync — a blocking `git add -A` on a slow disk/large tree froze the interface.
+  -- sync_on_exit runs in the callback, after staging. Skipped during a merge:
+  -- `git add -A` would stage marker files and clear their unmerged status
+  -- (sync_on_exit handles the merge itself).
+  if
+    fn.isdirectory(c.dir .. '/.git') == 1
+    and vim.uv.fs_stat(c.dir .. '/.git/MERGE_HEAD') == nil
+  then
+    vim.system({ 'git', 'add', '-A' }, { cwd = c.dir }, function()
+      vim.schedule(function()
+        require('notes.git').sync_on_exit()
+      end)
+    end)
+  else
     require('notes.git').sync_on_exit()
   end
 end
@@ -326,8 +334,21 @@ function M.render_notes()
     end
   end
 
+  -- Ставим курсор на активную заметку (current_file), а не жёстко на строку 1:
+  -- фоновые ре-рендеры (git-синхронизация по завершении, BufWritePost) иначе
+  -- перебрасывали бы курсор наверх и авто-открывали верхнюю заметку. Если открытой
+  -- заметки нет в текущем списке (первый показ, смена папки) — строка 1.
   if st.list_win and api.nvim_win_is_valid(st.list_win) and not empty then
-    api.nvim_win_set_cursor(st.list_win, { 1, 0 })
+    local row = 1
+    if st.current_file then
+      for i, it in ipairs(st.items) do
+        if it.file == st.current_file then
+          row = i
+          break
+        end
+      end
+    end
+    api.nvim_win_set_cursor(st.list_win, { row, 0 })
   end
 
   M.highlight_active()

@@ -416,6 +416,40 @@ do
   notes.close()
 end
 
+-- ── background refresh keeps the cursor on the active note (not reset to top) ──
+do
+  io.write('refresh keeps cursor on active note\n')
+  local dir = tmpdir()
+  writefile(dir .. '/f/a', { 'aaa' })
+  writefile(dir .. '/f/b', { 'bbb' })
+  writefile(dir .. '/f/c', { 'ccc' })
+  fn.system({ 'touch', '-t', '202601010003', dir .. '/f/c' })
+  fn.system({ 'touch', '-t', '202601010002', dir .. '/f/b' })
+  fn.system({ 'touch', '-t', '202601010001', dir .. '/f/a' })
+
+  fresh_open(dir)
+  notes.state.current_folder = 'f'
+  picker.filter()
+  picker.render_notes()
+
+  -- open the note on row 2 (b), as auto-open would on cursor move
+  api.nvim_win_set_cursor(notes.state.list_win, { 2, 0 })
+  picker.open_selected()
+  local active = notes.state.current_file
+  check('note on row 2 is open', active == notes.state.items[2].file)
+
+  -- a background sync would call refresh(); cursor must stay on the active note
+  picker.refresh()
+  check(
+    'cursor stays on active note after refresh',
+    api.nvim_win_get_cursor(notes.state.list_win)[1] == 2,
+    tostring(api.nvim_win_get_cursor(notes.state.list_win)[1])
+  )
+
+  vim.bo[notes.state.edit_buf].modified = false
+  notes.close()
+end
+
 -- ── cancel move: second `x` on the marked note clears the mark ────────────────
 do
   io.write('cancel move (toggle x)\n')
