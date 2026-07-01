@@ -285,6 +285,31 @@ do
   notes.close()
 end
 
+-- ── create_note moves the cursor onto the new note ───────────────────────────
+do
+  io.write('create moves cursor to new note\n')
+  local dir = tmpdir()
+  writefile(dir .. '/f/a', { 'aaa' })
+  writefile(dir .. '/f/b', { 'bbb' })
+
+  fresh_open(dir)
+  notes.state.current_folder = 'f'
+  picker.filter()
+  picker.render_notes()
+  -- cursor somewhere other than the top before creating
+  api.nvim_win_set_cursor(notes.state.list_win, { 2, 0 })
+
+  picker.create_note()
+
+  -- the new empty note is pinned to the top (row 1); the cursor must land on it
+  check('cursor moved to row 1', api.nvim_win_get_cursor(notes.state.list_win)[1] == 1,
+    tostring(api.nvim_win_get_cursor(notes.state.list_win)[1]))
+  check('row-1 note is the new active note', notes.state.current_file == notes.state.items[1].file)
+  check('new note is empty', notes.state.items[1].empty == true)
+
+  notes.close()
+end
+
 -- ── create_note: only one empty note per folder ──────────────────────────────
 do
   io.write('create note dedupe\n')

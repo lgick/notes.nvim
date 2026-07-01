@@ -462,8 +462,10 @@ function M.create_note()
   fn.mkdir(target_dir, 'p')
   local target = target_dir .. '/' .. new_id(target_dir)
   fn.writefile({}, target)
-  M.populate()
+  -- open first, then populate: render_notes puts the cursor on current_file, so the
+  -- new (empty, pinned-top) note becomes the one the cursor lands on
   require('notes.ui').open_in_edit(target)
+  M.populate()
   sync()
 end
 
