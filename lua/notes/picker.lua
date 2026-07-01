@@ -52,24 +52,19 @@ local function sync()
   if c.repo == '' then
     return
   end
-  -- Stage changes (local, no network) so that restore() on the next open() does not
-  -- undo an in-flight deletion. Done ASYNC (no :wait) so the UI never blocks during
-  -- sync — a blocking `git add -A` on a slow disk/large tree froze the interface.
-  -- sync_on_exit runs in the callback, after staging. Skipped during a merge:
-  -- `git add -A` would stage marker files and clear their unmerged status
-  -- (sync_on_exit handles the merge itself).
-  if
-    fn.isdirectory(c.dir .. '/.git') == 1
-    and vim.uv.fs_stat(c.dir .. '/.git/MERGE_HEAD') == nil
-  then
-    vim.system({ 'git', 'add', '-A' }, { cwd = c.dir }, function()
-      vim.schedule(function()
-        require('notes.git').sync_on_exit()
-      end)
-    end)
-  else
-    require('notes.git').sync_on_exit()
+  -- Пока идёт стартовый restore/pull (synced=false), CRUD-синхронизацию не запускаем:
+  -- её git-команды гонялись бы с открытым M.pull и могли протолкнуть в remote коммит,
+  -- из-за которого этот pull падает на ещё untracked-файле ("Cannot fast-forward your
+  -- working tree"). Всё созданное за это окно закоммитит пост-pull sync_on_exit в
+  -- init.open (тот же гейт уже стоит на BufWritePost).
+  if not require('notes').state.synced then
+    return
   end
+  -- Полностью асинхронно и под мьютексом sync_on_exit: commit_only внутри делает свой
+  -- `git add -A` (в т.ч. фиксирует удаление, чтобы restore() его не воскресил), поэтому
+  -- отдельный блокирующий `git add -A` здесь не нужен — он только морозил UI и плодил
+  -- конкурентные git-процессы.
+  require('notes.git').sync_on_exit()
 end
 
 -- Title = first non-blank line of the file; empty note → EMPTY_TITLE.

@@ -13,6 +13,12 @@ local function cfg()
 end
 
 local function notify(msg, level)
+  -- Схлопываем переводы строк: многострочный текст ошибки git (напр. abort'а pull)
+  -- иначе переполняет область сообщений и вызывает hit-enter "Press ENTER" prompt.
+  msg = msg:gsub('%s+', ' '):gsub('^%s+', ''):gsub('%s+$', '')
+  if #msg > 300 then
+    msg = msg:sub(1, 300) .. '…'
+  end
   vim.schedule(function()
     vim.notify('[notes.nvim] ' .. msg, level or vim.log.levels.INFO)
   end)
