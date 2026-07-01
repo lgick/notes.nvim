@@ -332,6 +332,103 @@ do
   check('note moved into folder', fn.filereadable(dir .. '/Target/movable') == 1)
   check('old path gone', fn.filereadable(dir .. '/movable') == 0)
   check('cut cleared', notes.state.cut == nil)
+  check('target folder selected', notes.state.current_folder == 'Target')
+  check('target folder first among real folders', notes.state.folders[2].folder == 'Target', folder_names()[2])
+  check(
+    'notes column shows target folder note',
+    #notes.state.items == 1 and notes.state.items[1].title == 'move me',
+    table.concat(titles(), ',')
+  )
+
+  notes.close()
+end
+
+-- ── move floats destination deterministically even on an mtime-second tie ─────
+-- Repro of the "sometimes the destination folder is not first" bug: moving a note
+-- out of a_src empties it, bumping a_src's *directory* mtime to now — the same
+-- second as the moved note in z_dst. Without the note-bearing/name tie-break the
+-- unstable table.sort could order a_src first. z_dst must always come first.
+do
+  io.write('move floats destination on mtime tie\n')
+  local dir = tmpdir()
+  writefile(dir .. '/a_src/note', { 'move me' })
+  fn.mkdir(dir .. '/z_dst', 'p')
+  fn.writefile({}, dir .. '/z_dst/.gitkeep')
+
+  fresh_open(dir)
+  notes.state.current_folder = 'a_src'
+  picker.filter()
+  picker.render_notes()
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.cut_note()
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'z_dst' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.paste_note()
+
+  -- force the exact collision: a_src dir mtime == z_dst note mtime (same second)
+  fn.system({ 'touch', '-t', '202601011200', dir .. '/a_src' })
+  fn.system({ 'touch', '-t', '202601011200', dir .. '/z_dst/note' })
+
+  -- re-scan multiple times: order must be stable and put the destination first
+  for _ = 1, 5 do
+    picker.populate()
+    check(
+      'destination z_dst is first real folder',
+      notes.state.folders[2] and notes.state.folders[2].folder == 'z_dst',
+      notes.state.folders[2] and notes.state.folders[2].folder
+    )
+  end
+
+  notes.close()
+end
+
+-- ── cut keeps the cursor on the selected note (not reset to the top) ──────────
+do
+  io.write('cut keeps cursor on selected note\n')
+  local dir = tmpdir()
+  writefile(dir .. '/f/a', { 'aaa' })
+  writefile(dir .. '/f/b', { 'bbb' })
+  writefile(dir .. '/f/c', { 'ccc' })
+  -- mtimes: c newest, b middle, a oldest → rows: c(1), b(2), a(3)
+  fn.system({ 'touch', '-t', '202601010003', dir .. '/f/c' })
+  fn.system({ 'touch', '-t', '202601010002', dir .. '/f/b' })
+  fn.system({ 'touch', '-t', '202601010001', dir .. '/f/a' })
+
+  fresh_open(dir)
+  notes.state.current_folder = 'f'
+  picker.filter()
+  picker.render_notes()
+
+  api.nvim_win_set_cursor(notes.state.list_win, { 2, 0 }) -- select row 2 (b)
+  local want = notes.state.items[2]
+  picker.cut_note()
+  check('cursor stays on row 2 after cut', api.nvim_win_get_cursor(notes.state.list_win)[1] == 2,
+    tostring(api.nvim_win_get_cursor(notes.state.list_win)[1]))
+  check('marked note is the row-2 note', notes.state.cut == want.file)
+
+  picker.cut_note() -- cancel on the same row
+  check('cursor stays on row 2 after cancel', api.nvim_win_get_cursor(notes.state.list_win)[1] == 2)
+  check('mark cleared', notes.state.cut == nil)
+
+  notes.close()
+end
+
+-- ── cancel move: second `x` on the marked note clears the mark ────────────────
+do
+  io.write('cancel move (toggle x)\n')
+  local dir = tmpdir()
+  writefile(dir .. '/n1', { 'note one' })
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  local note = notes.state.items[1]
+  picker.cut_note()
+  check('cut marks the note', notes.state.cut == note.file)
+  picker.cut_note() -- second press on the same note cancels
+  check('second x cancels move', notes.state.cut == nil)
 
   notes.close()
 end

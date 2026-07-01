@@ -126,9 +126,11 @@ function M.scan()
   -- folder recency = mtime of its most recently modified note;
   -- empty folders fall back to the directory's own mtime (≈ creation time).
   local fm = {}
+  local has_note = {}
   for _, n in ipairs(notes) do
     if n.folder ~= '' then
       fm[n.folder] = math.max(fm[n.folder] or 0, n.mtime)
+      has_note[n.folder] = true
     end
   end
   for _, name in ipairs(real) do
@@ -137,8 +139,20 @@ function M.scan()
       fm[name] = s and s.mtime.sec or 0
     end
   end
+  -- Строгий детерминированный порядок (table.sort нестабилен для равных ключей).
+  -- Тай-брейки после свежести: при равной секунде папка с заметкой опережает пустую
+  -- (случай перемещения — приёмник получил заметку с mtime=now, а опустевший источник
+  -- поднял mtime своего каталога до той же секунды), затем добор по имени.
   table.sort(real, function(a, b)
-    return (fm[a] or 0) > (fm[b] or 0)
+    local ma, mb = fm[a] or 0, fm[b] or 0
+    if ma ~= mb then
+      return ma > mb
+    end
+    local na, nb = has_note[a] or false, has_note[b] or false
+    if na ~= nb then
+      return na
+    end
+    return a < b
   end)
 
   -- root "Notes" pinned first, then real folders by recency
@@ -568,9 +582,30 @@ function M.cut_note()
     notify_conflict_block()
     return
   end
-  state().cut = it.file
+  local st = state()
+  -- второе нажатие x на уже помеченной заметке отменяет перемещение
+  -- (без idiom `and/or`: nil ложно и сломал бы ветку отмены)
+  local cancel = st.cut == it.file
+  if cancel then
+    st.cut = nil
+  else
+    st.cut = it.file
+  end
+
+  -- render_notes сбрасывает курсор на строку 1; при пометке список не меняется,
+  -- поэтому сохраняем позицию и возвращаем её, чтобы остаться на выделенной заметке
+  local pos = (st.list_win and api.nvim_win_is_valid(st.list_win))
+      and api.nvim_win_get_cursor(st.list_win)
+    or nil
   M.render_notes()
-  vim.notify('[notes.nvim] Navigate to a folder and press ' .. cfg().keys.paste)
+  if pos then
+    pcall(api.nvim_win_set_cursor, st.list_win, pos)
+  end
+
+  vim.notify(
+    cancel and '[notes.nvim] Move cancelled'
+      or ('[notes.nvim] Navigate to a folder and press ' .. cfg().keys.paste)
+  )
 end
 
 -- <CR> in the folders column: focus the notes column.
@@ -627,6 +662,12 @@ function M.paste_note()
 
   fn.rename(src, target)
 
+  -- поднять папку-приёмник наверх: свежесть папки = максимальный mtime её заметок,
+  -- а fn.rename сохраняет mtime, поэтому обновляем его на «сейчас» (заодно
+  -- перемещённая заметка окажется вверху списка заметок этой папки)
+  local now = os.time()
+  vim.uv.fs_utime(target, now, now)
+
   if st.current_file == src then
     local old_buf = st.edit_buf
     require('notes.ui').open_in_edit(target)
@@ -634,7 +675,21 @@ function M.paste_note()
       pcall(api.nvim_buf_delete, old_buf, { force = true })
     end
   end
+
+  -- выбрать папку-приёмник: её заметки заполняют колонку Notes, сама папка
+  -- подсвечивается активной, а с обновлённым mtime стоит первой среди реальных папок
+  st.current_folder = f.folder
   M.populate()
+
+  if st.folders_win and api.nvim_win_is_valid(st.folders_win) then
+    for i, folder in ipairs(st.folders or {}) do
+      if folder.folder == f.folder then
+        api.nvim_win_set_cursor(st.folders_win, { i, 0 })
+        break
+      end
+    end
+  end
+
   sync()
 end
 
