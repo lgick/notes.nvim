@@ -226,6 +226,14 @@ vim.keymap.set('n', '<leader>m', '<cmd>Notes<CR>', { desc = 'Notes' })
 
 Задайте `repo = ''`, чтобы отключить все операции git.
 
+## Поддержать проект
+
+Если плагин вам полезен, можно поддержать разработку донатом в Bitcoin:
+
+<img width="200" height="200" alt="Image" src="https://github.com/user-attachments/assets/c2109efa-5116-42cc-925b-231dafc3c483" />
+
+`bc1q0fnakv2jean57p3rjqzhq826jklygpj6gc7evu`
+
 ## Лицензия
 
 MIT

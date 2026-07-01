@@ -226,6 +226,14 @@ Multiple rapid CRUD actions are serialised: at most one git chain runs at a time
 
 Set `repo = ''` to disable all git operations.
 
+## Donate
+
+If you find this plugin useful, you can support development with a Bitcoin donation:
+
+<img width="200" height="200" alt="Image" src="https://github.com/user-attachments/assets/c2109efa-5116-42cc-925b-231dafc3c483" />
+
+`bc1q0fnakv2jean57p3rjqzhq826jklygpj6gc7evu`
+
 ## License
 
 MIT
