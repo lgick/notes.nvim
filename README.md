@@ -5,6 +5,8 @@
 A lightweight Neovim plugin for managing notes in a dedicated tab — modelled on the
 **macOS Notes** app — with optional GitHub synchronization via Git (SSH).
 
+<video src="https://github.com/user-attachments/assets/7ff882ff-7cfc-4739-8765-e9e4ddc6fd5f" autoplay loop muted playsinline></video>
+
 ```
 ──────────────┬──────────────────────────────────
  Folders      │ Notes                            ← statuslines
@@ -18,8 +20,6 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
  - [ ] Milk
  - [ ] Call the bank
 ```
-
-<video src="https://github.com/user-attachments/assets/7ff882ff-7cfc-4739-8765-e9e4ddc6fd5f" autoplay loop muted playsinline></video>
 
 ## Features
 
