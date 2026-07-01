@@ -19,6 +19,8 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
  - [ ] Call the bank
 ```
 
+<video src="https://github.com/user-attachments/assets/7ff882ff-7cfc-4739-8765-e9e4ddc6fd5f" autoplay loop muted playsinline></video>
+
 ## Features
 
 - **Two-pane, macOS-Notes-style UI** — opens in a new full-screen tab: **folders** (left column) and **notes** (right column) on top, the editor on the bottom. Closing notes closes the tab.
