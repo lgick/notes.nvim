@@ -816,7 +816,8 @@ do
 
   ui.set_sync_status('syncing')
   local ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')
-  check('syncing icon is ~', ok and t == 'notes.nvim ~', ok and t or '')
+  -- ⠋ = U+280B = \xe2\xa0\x8b (first braille spinner frame)
+  check('syncing icon is spinner frame', ok and t == 'notes.nvim \xe2\xa0\x8b', ok and t or '')
 
   ui.set_sync_status('idle')
   ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')

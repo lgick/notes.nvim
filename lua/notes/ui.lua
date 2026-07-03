@@ -13,9 +13,23 @@ local _old_tabline = nil
 -- (a reliable proxy for Nerd Fonts being present), otherwise plain Unicode fallback.
 local SYNC_ICONS = {
   idle     = { plain = '\xe2\x9c\x93', nf = '\xef\x80\x8c' }, -- ✓ / nf-fa-check
-  syncing  = { plain = '~',            nf = '\xef\x80\xa1' }, --   / nf-fa-refresh
   conflict = { plain = '\xe2\x9a\xa0', nf = '\xef\x81\xb1' }, -- ⚠ / nf-fa-warning
 }
+
+local SPIN_FRAMES = { '\xe2\xa0\x8b', '\xe2\xa0\x99', '\xe2\xa0\xb9', '\xe2\xa0\xb8',
+                      '\xe2\xa0\xbc', '\xe2\xa0\xb4', '\xe2\xa0\xa6', '\xe2\xa0\xa7',
+                      '\xe2\xa0\x87', '\xe2\xa0\x8f' } -- ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
+
+local _sync_timer = nil
+local _sync_frame = 0
+
+local function stop_spin()
+  if _sync_timer then
+    _sync_timer:stop()
+    _sync_timer:close()
+    _sync_timer = nil
+  end
+end
 
 local function has_nerd_fonts()
   return package.loaded['nvim-web-devicons'] ~= nil
@@ -23,11 +37,37 @@ local function has_nerd_fonts()
 end
 
 function M.set_sync_status(status)
+  stop_spin()
   local st = require('notes').state
   local c = require('notes').config
   if not (st.tab and api.nvim_tabpage_is_valid(st.tab)) then
     return
   end
+
+  if status == 'syncing' and c.repo ~= '' then
+    local custom = c.sync_icons and c.sync_icons.syncing
+    if custom then
+      api.nvim_tabpage_set_var(st.tab, 'title', 'notes.nvim ' .. custom)
+    else
+      _sync_frame = 1
+      api.nvim_tabpage_set_var(st.tab, 'title', 'notes.nvim ' .. SPIN_FRAMES[1])
+      _sync_timer = vim.uv.new_timer()
+      _sync_timer:start(100, 100, function()
+        vim.schedule(function()
+          local s = require('notes').state
+          if not (s.tab and api.nvim_tabpage_is_valid(s.tab)) then
+            stop_spin()
+            return
+          end
+          _sync_frame = (_sync_frame % #SPIN_FRAMES) + 1
+          api.nvim_tabpage_set_var(s.tab, 'title', 'notes.nvim ' .. SPIN_FRAMES[_sync_frame])
+          vim.cmd('redrawtabline')
+        end)
+      end)
+    end
+    return
+  end
+
   local label = 'notes.nvim'
   if c.repo ~= '' then
     local row = SYNC_ICONS[status]
@@ -484,6 +524,7 @@ function M.toggle_panels()
 end
 
 function M.close()
+  stop_spin()
   local st = require('notes').state
   if st.closing then
     return
