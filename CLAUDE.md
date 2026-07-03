@@ -173,7 +173,7 @@ Key design decision: **no hardcoded branch name**. Pull uses `git pull --no-reba
 Helpers:
 - `merging(dir)` — `.git/MERGE_HEAD` exists (a merge is in progress).
 - `has_markers(file)` — the file still contains conflict-marker lines. A staged-but-marker-laden file must never be committed.
-- `conflict_label(path)` / `notify_conflict(paths)` — build a `Conflict in: <labels> — edit and save to resolve` WARN; the label is the file's first real (non-marker) content line, falling back to the file name.
+- `conflict_label(path)` / `notify_conflict(paths)` — build a `Conflict in: <labels> — edit and save to resolve` WARN; the label is `folder/title` where `folder` is `Notes` for root notes or the subdirectory name, and `title` is the first real (non-marker) content line, falling back to the file name. `conflict_label` is exported as `M.conflict_label` for unit tests (same pattern as `repo_url`).
 - `update_conflicts(dir, cb)` — `git diff --name-only --diff-filter=U -z`, builds `state.conflicts` as a set of **absolute** paths (rel paths from git → `dir .. '/' .. rel`; `nil` when empty), then `cb(set)`. This is the single source of truth for `state.conflicts`; `picker` only reads it.
 
 `sync_on_exit()` is called from: `notes.close()`, the `BufWritePost` autocmd (on `:w`), and after each change action.

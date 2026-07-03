@@ -780,6 +780,35 @@ do
   notes.close()
 end
 
+-- ── git.conflict_label: folder/title format ──────────────────────────────────
+do
+  io.write('conflict_label\n')
+  local dir = tmpdir()
+  notes.setup({ dir = dir })
+  local git = require('notes.git')
+
+  local root_note = dir .. '/20260101000000.md'
+  fn.writefile({ '# My Title', 'body text' }, root_note)
+  check('root note: Notes/title', git.conflict_label(root_note) == 'Notes/# My Title')
+
+  fn.mkdir(dir .. '/work', 'p')
+  local sub_note = dir .. '/work/20260102000000.md'
+  fn.writefile({ 'Task note', 'details' }, sub_note)
+  check('subfolder note: work/title', git.conflict_label(sub_note) == 'work/Task note')
+
+  -- first real line after conflict markers
+  fn.writefile({ '<<<<<<< HEAD', 'local version', '=======', 'remote', '>>>>>>> abc' }, root_note)
+  check('markers: skips to first real line', git.conflict_label(root_note) == 'Notes/local version')
+
+  -- all markers, no real content → falls back to filename
+  fn.writefile({ '<<<<<<< HEAD', '=======', '>>>>>>> abc' }, root_note)
+  check('all markers: falls back to filename', git.conflict_label(root_note) == 'Notes/20260101000000.md')
+
+  -- empty file → falls back to filename
+  fn.writefile({}, root_note)
+  check('empty file: falls back to filename', git.conflict_label(root_note) == 'Notes/20260101000000.md')
+end
+
 -- ── git.repo_url: ssh/scp/https → browsable https URL ─────────────────────────
 do
   io.write('repo_url conversion\n')

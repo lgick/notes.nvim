@@ -66,9 +66,13 @@ local function has_markers(file)
   return false
 end
 
--- A human label for a conflicted note: its first real content line (skipping the
--- merge markers), falling back to the file name.
+-- A human label for a conflicted note: "folder/title" where folder is "Notes" for
+-- root notes or the subdirectory name, and title is the first real content line.
 local function conflict_label(path)
+  local dir = cfg().dir
+  local parent = fn.fnamemodify(path, ':h')
+  local folder = (parent == dir) and 'Notes' or fn.fnamemodify(parent, ':t')
+
   local ok, lines = pcall(fn.readfile, path, '', 50)
   if ok then
     for _, l in ipairs(lines) do
@@ -80,11 +84,11 @@ local function conflict_label(path)
         and not t:match('^>>>>>>>')
         and not t:match('^|||||||')
       then
-        return t
+        return folder .. '/' .. t
       end
     end
   end
-  return fn.fnamemodify(path, ':t')
+  return folder .. '/' .. fn.fnamemodify(path, ':t')
 end
 
 local function notify_conflict(paths)
@@ -230,6 +234,9 @@ function M.pull(cb)
     end)
   end)
 end
+
+-- Exposed for unit tests (mirrors repo_url export pattern).
+M.conflict_label = conflict_label
 
 -- git@github.com:user/repo.git / ssh://git@host/… / https://…  →  https://host/user/repo
 function M.repo_url(repo)
