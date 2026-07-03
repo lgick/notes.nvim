@@ -22,7 +22,10 @@ M.config = {
     scroll_up = '<C-p>', -- notes: scroll the open note up
     close = 'q', -- close notes (works from any notes window)
     window_nav = '<C-w>', -- prefix: h/j/k/l → move between windows (wincmd)
+    toggle_panels = 'f', -- hide/show Folders + Notes columns
   },
+  -- Override sync status icons; nil = auto (Nerd Font glyph if nvim-web-devicons loaded, else Unicode)
+  sync_icons = nil,
 }
 
 M.state = {
@@ -42,6 +45,7 @@ M.state = {
   notes_all = nil, -- full scan: array of { file, folder, title, mtime, empty }
   items = nil, -- filtered notes for the current folder
   conflicts = nil, -- set { [abs path] = true } of unmerged (conflicted) notes; nil = none
+  panels_hidden = false, -- true while Folders + Notes columns are toggled off
 }
 
 function M.is_open()
@@ -65,6 +69,7 @@ function M.is_open()
     st.notes_all = nil
     st.folders = nil
     st.conflicts = nil
+    st.panels_hidden = false
   end
   return false
 end

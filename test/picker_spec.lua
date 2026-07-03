@@ -798,6 +798,140 @@ do
   )
 end
 
+-- ── set_sync_status: tab title reflects sync state and config ─────────────────
+do
+  io.write('set_sync_status\n')
+  local dir = tmpdir()
+  local ui = require('notes.ui')
+
+  -- Open without repo (synchronous, no git), then patch config to test icons.
+  -- In headless mode nvim-web-devicons is not loaded → plain Unicode fallback.
+  notes.state.tab = nil
+  notes.state.synced = false
+  notes.setup({ dir = dir, repo = '' })
+  notes.open()
+
+  notes.config.repo = 'git@github.com:user/notes.git'
+  notes.config.sync_icons = nil
+
+  ui.set_sync_status('syncing')
+  local ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')
+  check('syncing icon is ~', ok and t == 'notes.nvim ~', ok and t or '')
+
+  ui.set_sync_status('idle')
+  ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')
+  -- ✓ = U+2713 = \xe2\x9c\x93
+  check('idle icon is checkmark', ok and t == 'notes.nvim \xe2\x9c\x93', ok and t or '')
+
+  ui.set_sync_status('conflict')
+  ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')
+  -- ⚠ = U+26A0 = \xe2\x9a\xa0
+  check('conflict icon is warning', ok and t == 'notes.nvim \xe2\x9a\xa0', ok and t or '')
+
+  -- no repo → no icon
+  notes.config.repo = ''
+  ui.set_sync_status('idle')
+  ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')
+  check('no repo → label without icon', ok and t == 'notes.nvim', ok and t or '')
+
+  -- custom icons override auto-detect
+  notes.config.repo = 'git@github.com:user/notes.git'
+  notes.config.sync_icons = { idle = 'OK', syncing = '...', conflict = '!!' }
+
+  ui.set_sync_status('idle')
+  ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')
+  check('custom idle icon', ok and t == 'notes.nvim OK', ok and t or '')
+
+  ui.set_sync_status('syncing')
+  ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')
+  check('custom syncing icon', ok and t == 'notes.nvim ...', ok and t or '')
+
+  ui.set_sync_status('conflict')
+  ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')
+  check('custom conflict icon', ok and t == 'notes.nvim !!', ok and t or '')
+
+  -- invalid status → label unchanged (no crash)
+  notes.config.sync_icons = nil
+  ui.set_sync_status('unknown_status')
+  ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')
+  check('unknown status: no crash', ok)
+
+  notes.config.repo = ''
+  notes.close()
+end
+
+-- ── toggle_panels: hide and restore Folders + Notes columns ───────────────────
+do
+  io.write('toggle_panels\n')
+  local dir = tmpdir()
+  writefile(dir .. '/n1', { 'note one' })
+  writefile(dir .. '/Work/n2', { 'note two' })
+
+  fresh_open(dir)
+  local ui = require('notes.ui')
+
+  -- initial state: panels visible
+  check('initial: panels_hidden false', notes.state.panels_hidden == false)
+  check('initial: folders_win valid',
+    notes.state.folders_win ~= nil and api.nvim_win_is_valid(notes.state.folders_win))
+  check('initial: list_win valid',
+    notes.state.list_win ~= nil and api.nvim_win_is_valid(notes.state.list_win))
+
+  -- hide panels
+  ui.toggle_panels()
+  check('hidden: panels_hidden true', notes.state.panels_hidden == true)
+  check('hidden: folders_win nil', notes.state.folders_win == nil)
+  check('hidden: list_win nil', notes.state.list_win == nil)
+  check('hidden: edit_win still valid',
+    notes.state.edit_win ~= nil and api.nvim_win_is_valid(notes.state.edit_win))
+  check('hidden: plugin still open', notes.is_open())
+
+  -- show panels again
+  ui.toggle_panels()
+  check('shown: panels_hidden false', notes.state.panels_hidden == false)
+  check('shown: folders_win valid',
+    notes.state.folders_win ~= nil and api.nvim_win_is_valid(notes.state.folders_win))
+  check('shown: list_win valid',
+    notes.state.list_win ~= nil and api.nvim_win_is_valid(notes.state.list_win))
+
+  -- panels are populated after restore
+  local lines = api.nvim_buf_get_lines(notes.state.list_buf, 0, -1, false)
+  check('shown: notes column populated',
+    #lines > 0 and lines[1] ~= '(no notes)',
+    (#lines > 0 and lines[1]) or 'empty')
+
+  local flines = api.nvim_buf_get_lines(notes.state.folders_buf, 0, -1, false)
+  check('shown: folders column populated', #flines > 0, tostring(#flines))
+
+  -- CursorMoved still works: moving in the notes column opens the note
+  api.nvim_set_current_win(notes.state.list_win)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.open_selected()
+  check('cursor-move opens note after restore', notes.state.current_file ~= nil)
+
+  if notes.state.edit_buf and api.nvim_buf_is_valid(notes.state.edit_buf) then
+    vim.bo[notes.state.edit_buf].modified = false
+  end
+  notes.close()
+end
+
+-- ── toggle_panels: closing works correctly while panels are hidden ─────────────
+do
+  io.write('close with hidden panels\n')
+  local dir = tmpdir()
+  writefile(dir .. '/n1', { 'note one' })
+
+  fresh_open(dir)
+  local ui = require('notes.ui')
+
+  ui.toggle_panels()
+  check('panels hidden before close', notes.state.panels_hidden == true)
+
+  local ok = pcall(notes.close)
+  check('close does not error', ok)
+  check('plugin closed', not notes.is_open())
+end
+
 io.write('\n')
 if failures > 0 then
   io.write(failures .. ' check(s) FAILED\n')

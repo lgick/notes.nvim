@@ -158,6 +158,8 @@ function M.restore(cb)
     return
   end
 
+  require('notes.ui').set_sync_status('syncing')
+
   git({ 'ls-files', '--deleted', '-z' }, c.dir, function(res)
     local out = res.stdout or ''
     if res.code ~= 0 or out == '' then
@@ -196,6 +198,8 @@ function M.pull(cb)
     return
   end
 
+  require('notes.ui').set_sync_status('syncing')
+
   git({ 'ls-remote', '--heads', 'origin' }, c.dir, function(ls_res)
     if ls_res.code ~= 0 or not ls_res.stdout or ls_res.stdout == '' then
       cb()
@@ -214,6 +218,8 @@ function M.pull(cb)
           update_conflicts(c.dir, function(set)
             if next(set) then
               notify_conflict(vim.tbl_keys(set))
+              -- sync_on_exit won't run (MERGE_HEAD present); set status here
+              require('notes.ui').set_sync_status('conflict')
             elseif res.code ~= 0 then
               notify('Pull failed: ' .. (res.stderr or ''), vim.log.levels.WARN)
             end
@@ -262,6 +268,7 @@ function M.sync_on_exit()
     return
   end
   syncing = true
+  require('notes.ui').set_sync_status('syncing')
 
   local function finish()
     syncing = false
@@ -269,8 +276,11 @@ function M.sync_on_exit()
       sync_pending = false
       M.sync_on_exit()
     else
-      if require('notes').is_open() then
+      local notes = require('notes')
+      if notes.is_open() then
         require('notes.picker').refresh()
+        local st = notes.state
+        require('notes.ui').set_sync_status(st.conflicts and 'conflict' or 'idle')
       end
       -- one-shot completion hook fired only at true idle (no pending sync);
       -- used by the test suite to await the async chain

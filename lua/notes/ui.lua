@@ -8,6 +8,37 @@ local fn = vim.fn
 -- saved value of `tabline` before we override it; nil means we didn't override
 local _old_tabline = nil
 
+-- Sync status icons shown in the tab title when a remote repo is configured.
+-- Nerd Font glyphs are used when nvim-web-devicons is already loaded in the session
+-- (a reliable proxy for Nerd Fonts being present), otherwise plain Unicode fallback.
+local SYNC_ICONS = {
+  idle     = { plain = '\xe2\x9c\x93', nf = '\xef\x80\x8c' }, -- ✓ / nf-fa-check
+  syncing  = { plain = '~',            nf = '\xef\x80\xa1' }, --   / nf-fa-refresh
+  conflict = { plain = '\xe2\x9a\xa0', nf = '\xef\x81\xb1' }, -- ⚠ / nf-fa-warning
+}
+
+local function has_nerd_fonts()
+  return package.loaded['nvim-web-devicons'] ~= nil
+end
+
+function M.set_sync_status(status)
+  local st = require('notes').state
+  local c = require('notes').config
+  if not (st.tab and api.nvim_tabpage_is_valid(st.tab)) then
+    return
+  end
+  local label = 'notes.nvim'
+  if c.repo ~= '' then
+    local row = SYNC_ICONS[status]
+    if row then
+      local custom = c.sync_icons and c.sync_icons[status]
+      local icon = custom or (has_nerd_fonts() and row.nf or row.plain)
+      label = label .. ' ' .. icon
+    end
+  end
+  api.nvim_tabpage_set_var(st.tab, 'title', label)
+end
+
 -- live-title autocmd group; cleared per editor buffer so revisiting a note does
 -- not stack duplicate TextChanged handlers
 local live_title_group = api.nvim_create_augroup('NotesEditLiveTitle', { clear = true })
@@ -107,6 +138,9 @@ function M.show_placeholder()
   vim.keymap.set('n', cfg().keys.close, function()
     require('notes').close_interactive()
   end, { buffer = buf, silent = true, desc = 'Notes: close' })
+  vim.keymap.set('n', cfg().keys.toggle_panels, function()
+    M.toggle_panels()
+  end, { buffer = buf, silent = true, desc = 'Notes: toggle panels' })
 
   -- wipe the previous real-file buffer so its deleted backing file can't raise E211
   if old ~= buf and api.nvim_buf_is_valid(old) and vim.bo[old].buftype == '' then
@@ -161,6 +195,34 @@ function M.set_nav_keymaps(buf)
   end, { buffer = buf, silent = true, desc = 'Notes: window nav' })
 end
 
+-- CursorMoved handlers for the two panel buffers (list + folders). Kept in a
+-- separate augroup so they can be re-registered after toggle_panels recreates them.
+local function setup_panel_autocmds(st)
+  local group = api.nvim_create_augroup('NotesPanels', { clear = true })
+
+  api.nvim_create_autocmd('CursorMoved', {
+    group = group,
+    buffer = st.list_buf,
+    callback = function()
+      if api.nvim_get_current_win() ~= st.list_win then
+        return
+      end
+      require('notes.picker').open_selected()
+    end,
+  })
+
+  api.nvim_create_autocmd('CursorMoved', {
+    group = group,
+    buffer = st.folders_buf,
+    callback = function()
+      if api.nvim_get_current_win() ~= st.folders_win then
+        return
+      end
+      require('notes.picker').select_folder()
+    end,
+  })
+end
+
 local function setup_autocmds(st)
   local group = api.nvim_create_augroup('NotesWin', { clear = true })
 
@@ -179,29 +241,7 @@ local function setup_autocmds(st)
     end,
   })
 
-  -- auto-open note when navigating the notes column
-  api.nvim_create_autocmd('CursorMoved', {
-    group = group,
-    buffer = st.list_buf,
-    callback = function()
-      if api.nvim_get_current_win() ~= st.list_win then
-        return
-      end
-      require('notes.picker').open_selected()
-    end,
-  })
-
-  -- switch the notes column when navigating the folders column
-  api.nvim_create_autocmd('CursorMoved', {
-    group = group,
-    buffer = st.folders_buf,
-    callback = function()
-      if api.nvim_get_current_win() ~= st.folders_win then
-        return
-      end
-      require('notes.picker').select_folder()
-    end,
-  })
+  setup_panel_autocmds(st)
 
   -- git sync on :w for files inside the notes directory (* also matches subdirs)
   api.nvim_create_autocmd('BufWritePost', {
@@ -244,8 +284,8 @@ function M.open()
   st.tab = api.nvim_get_current_tabpage()
   local base_win = api.nvim_get_current_win()
 
-  -- pin the tab label; tabline plugins can read t:title, built-in tabline uses M.tabline()
-  api.nvim_tabpage_set_var(st.tab, 'title', 'notes.nvim')
+  -- pin the tab label with initial sync status; updated by git.lua during sync
+  M.set_sync_status('syncing')
   if vim.o.tabline == '' then
     _old_tabline = ''
     vim.o.tabline = '%!v:lua.require("notes.ui").tabline()'
@@ -349,6 +389,9 @@ function M.open_in_edit(path)
   vim.keymap.set('n', cfg().keys.close, function()
     require('notes').close_interactive()
   end, { buffer = buf, silent = true, desc = 'Notes: close' })
+  vim.keymap.set('n', cfg().keys.toggle_panels, function()
+    M.toggle_panels()
+  end, { buffer = buf, silent = true, desc = 'Notes: toggle panels' })
 
   -- live title update: update the notes column while typing, without a disk read.
   -- clear any previous handler on this buffer first so revisiting a note does not
@@ -362,6 +405,81 @@ function M.open_in_edit(path)
     end,
   })
   -- focus is NOT moved: opening a note leaves the cursor in the notes/folders window
+end
+
+-- Toggle the Folders + Notes columns. Panels are hidden by closing their windows;
+-- the buffers are wiped (bufhidden=wipe). On restore the windows and buffers are
+-- recreated and re-populated. State is nil'd BEFORE closing so WinClosed doesn't
+-- mistake the controlled close for an external one and call notes.close().
+function M.toggle_panels()
+  local notes = require('notes')
+  local st = notes.state
+  if not notes.is_open() then
+    return
+  end
+
+  if st.panels_hidden then
+    if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
+      return
+    end
+
+    st.list_buf = api.nvim_create_buf(false, true)
+    vim.bo[st.list_buf].buftype = 'nofile'
+    vim.bo[st.list_buf].bufhidden = 'wipe'
+    vim.bo[st.list_buf].swapfile = false
+    vim.bo[st.list_buf].filetype = 'NotesList'
+    vim.bo[st.list_buf].modifiable = false
+    st.list_win = api.nvim_open_win(st.list_buf, false, {
+      split = 'above',
+      win = st.edit_win,
+      height = cfg().list_height,
+    })
+    list_win_opts(st.list_win)
+    vim.wo[st.list_win].statusline = ' Notes'
+
+    st.folders_buf = api.nvim_create_buf(false, true)
+    vim.bo[st.folders_buf].buftype = 'nofile'
+    vim.bo[st.folders_buf].bufhidden = 'wipe'
+    vim.bo[st.folders_buf].swapfile = false
+    vim.bo[st.folders_buf].filetype = 'NotesFolders'
+    vim.bo[st.folders_buf].modifiable = false
+    st.folders_win = api.nvim_open_win(st.folders_buf, false, {
+      split = 'left',
+      win = st.list_win,
+      width = cfg().folders_width,
+    })
+    list_win_opts(st.folders_win)
+    vim.wo[st.folders_win].winfixwidth = true
+    vim.wo[st.folders_win].statusline = ' Folders'
+
+    local picker = require('notes.picker')
+    picker.attach_folders(st.folders_buf)
+    picker.attach_notes(st.list_buf)
+    M.set_nav_keymaps(st.folders_buf)
+    M.set_nav_keymaps(st.list_buf)
+
+    setup_panel_autocmds(st)
+    picker.populate()
+    st.panels_hidden = false
+  else
+    local fw, lw = st.folders_win, st.list_win
+    -- nil state before close: WinClosed compares against st.folders_win/list_win,
+    -- which are now nil, so notes.close() is not triggered
+    st.folders_win = nil
+    st.folders_buf = nil
+    st.list_win = nil
+    st.list_buf = nil
+    st.panels_hidden = true
+    if fw and api.nvim_win_is_valid(fw) then
+      api.nvim_win_close(fw, true)
+    end
+    if lw and api.nvim_win_is_valid(lw) then
+      api.nvim_win_close(lw, true)
+    end
+    if st.edit_win and api.nvim_win_is_valid(st.edit_win) then
+      api.nvim_set_current_win(st.edit_win)
+    end
+  end
 end
 
 function M.close()
@@ -387,6 +505,7 @@ function M.close()
   st.notes_all = nil
   st.folders = nil
   st.conflicts = nil
+  st.panels_hidden = false
 
   if _old_tabline ~= nil then
     vim.o.tabline = _old_tabline

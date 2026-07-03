@@ -35,6 +35,8 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 - **Conflicts stay in the file** — a merge conflict is left as standard git markers in the note (no dialog). The conflicted note title and its folder name get a wavy error underline; edit the markers out, save, and the merge completes and pushes. Move/rename/delete of a conflicted note is blocked until you resolve it.
 - **Unsaved changes prompt** — pressing `q` when the editor has unsaved changes shows a **Save / Discard / Cancel** dialog instead of silently writing or discarding. Choosing **Discard** reloads the saved version from disk.
 - **Crash-safe** — on every open, tracked files deleted outside the plugin (e.g. an accidental `rm`) are restored from the last commit before anything is pushed, so an empty working tree never propagates to the remote.
+- **Sync status icon** — the Neovim tab label shows a sync status icon next to `notes.nvim`: `~` while syncing, `✓` when idle, `⚠` when there is a merge conflict. Nerd Font glyphs are used automatically if `nvim-web-devicons` is loaded; otherwise plain Unicode. No icon when `repo = ''`. Icons are fully configurable via `config.sync_icons`.
+- **Toggle panels** — press `f` (configurable) from any window to hide the Folders and Notes columns, giving the editor the full screen; press again to restore them. Useful when writing longer notes.
 - **No external dependencies** — pure Lua, no third-party plugins required.
 - **Works from any directory** — open your notes regardless of the current working directory.
 
@@ -112,9 +114,16 @@ require('notes').setup({
     open_github = 'O',     -- open the notes repository in the browser
     scroll_down = '<C-n>', -- notes: scroll the open note down
     scroll_up   = '<C-p>', -- notes: scroll the open note up
-    close       = 'q',     -- close notes (works from any notes window)
-    window_nav  = '<C-w>', -- prefix; then h/j/k/l → move between windows
+    close         = 'q',     -- close notes (works from any notes window)
+    window_nav    = '<C-w>', -- prefix; then h/j/k/l → move between windows
+    toggle_panels = 'f',     -- hide/show Folders + Notes columns
   },
+
+  -- Sync status icons shown in the tab label next to 'notes.nvim'.
+  -- nil = auto: Nerd Font glyphs if nvim-web-devicons is loaded, otherwise Unicode.
+  -- Set to a table to override individual icons.
+  sync_icons = nil,
+  -- sync_icons = { idle = '✓', syncing = '~', conflict = '⚠' },
 })
 ```
 
@@ -152,6 +161,7 @@ All keys are configurable via `config.keys` (see above).
 | `<C-n>` / `<C-p>` | Scroll the open note down / up | notes |
 | `R` | Refresh the list | folders / notes |
 | `O` | Open the notes repository in the browser | folders / notes |
+| `f` | Toggle Folders + Notes columns (hide / show) | any |
 | `<C-w>` then `h`/`j`/`k`/`l` | Move between windows | any |
 | `q` | Close notes (prompts if editor has unsaved changes) | any |
 
@@ -179,7 +189,7 @@ Override these to customize colors (they link to sensible defaults):
 
 All three windows use fixed per-window statuslines (` Folders`, ` Notes`, ` Editor`). If you use a statusline plugin (lualine, etc.) that overrides per-window statuslines, add the filetypes `NotesFolders` and `NotesList` to its exclusion list, and exclude the editor window by filetype (`markdown`) or by checking the buffer path.
 
-The notes tab is labelled `notes.nvim`. The label is pinned in the tab-local variable `t:title`, so tabline plugins that read it show the right name regardless of which inner window is focused. Only if you have **no** `tabline` set does the plugin install its own (restored on close).
+The notes tab is labelled `notes.nvim` plus a sync status icon (e.g. `notes.nvim ✓`). The label is pinned in the tab-local variable `t:title`, so tabline plugins that read it show the right name regardless of which inner window is focused. Only if you have **no** `tabline` set does the plugin install its own (restored on close). See `config.sync_icons` to customize or disable the icon.
 
 ### File structure
 
