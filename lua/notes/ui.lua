@@ -19,6 +19,7 @@ local SYNC_ICONS = {
 
 local function has_nerd_fonts()
   return package.loaded['nvim-web-devicons'] ~= nil
+    or pcall(require, 'nvim-web-devicons')
 end
 
 function M.set_sync_status(status)
