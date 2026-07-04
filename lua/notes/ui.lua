@@ -13,7 +13,7 @@ local _old_tabline = nil
 -- (a reliable proxy for Nerd Fonts being present), otherwise plain Unicode fallback.
 local SYNC_ICONS = {
   idle     = { plain = '\xe2\x9c\x93', nf = '\xef\x80\x8c' }, -- ✓ / nf-fa-check
-  conflict = { plain = '\xe2\x9a\xa0', nf = '\xef\x81\xb1' }, -- ⚠ / nf-fa-warning
+  conflict = { plain = '!', nf = '\xee\xa9\xac' }, -- ! / nf-cod-warning
 }
 
 local SPIN_FRAMES = { '\xe2\xa0\x8b', '\xe2\xa0\x99', '\xe2\xa0\xb9', '\xe2\xa0\xb8',

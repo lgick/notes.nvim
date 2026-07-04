@@ -855,8 +855,8 @@ do
 
   ui.set_sync_status('conflict')
   ok, t = pcall(api.nvim_tabpage_get_var, notes.state.tab, 'title')
-  -- ⚠ = U+26A0 = \xe2\x9a\xa0
-  check('conflict icon is warning', ok and t == 'notes.nvim \xe2\x9a\xa0', ok and t or '')
+  -- plain fallback = '!'
+  check('conflict icon is !', ok and t == 'notes.nvim !', ok and t or '')
 
   -- no repo → no icon
   notes.config.repo = ''
