@@ -372,6 +372,7 @@ function M.update_live_title(buf, file)
     end
   end
   M.render_notes()
+  require('notes.ui').refresh_editor_statusline()
 end
 
 function M.populate()

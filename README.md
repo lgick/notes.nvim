@@ -14,7 +14,7 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
  ├─ Work/      │ 25.06.2026 - Project idea
  └─ Personal/  │ 24.06.2026 - Report
 ──────────────┴──────────────────────────────────
- Editor                                           ← statusline
+ Notes/Shopping list                              ← statusline (folder/title)
  # Shopping list
 
  - [ ] Milk
@@ -187,7 +187,7 @@ Override these to customize colors (they link to sensible defaults):
 
 ### Statusline plugins
 
-All three windows use fixed per-window statuslines (` Folders`, ` Notes`, ` Editor`). If you use a statusline plugin (lualine, etc.) that overrides per-window statuslines, add the filetypes `NotesFolders` and `NotesList` to its exclusion list, and exclude the editor window by filetype (`markdown`) or by checking the buffer path.
+All three windows use fixed per-window statuslines. The folders column shows ` Folders`, the notes column shows ` Notes`, and the editor shows ` folder/title [+]` when a note is open (e.g. ` Notes/Shopping list` or ` Work/Project idea`), falling back to ` Editor` when no note is selected. If you use a statusline plugin (lualine, etc.) that overrides per-window statuslines, add the filetypes `NotesFolders` and `NotesList` to its exclusion list, and exclude the editor window by filetype (`markdown`) or by checking the buffer path.
 
 The notes tab is labelled `notes.nvim` plus a sync status indicator (e.g. `notes.nvim ✓`, or a spinning `notes.nvim ⠋` while syncing). The label is pinned in the tab-local variable `t:title`, so tabline plugins that read it show the right name regardless of which inner window is focused. Only if you have **no** `tabline` set does the plugin install its own (restored on close). See `config.sync_icons` to customize or disable the icon.
 

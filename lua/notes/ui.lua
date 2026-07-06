@@ -383,6 +383,28 @@ function M.open()
   api.nvim_set_current_win(st.folders_win)
 end
 
+local function editor_path_label(path)
+  local notes = require('notes')
+  local dir = notes.config.dir
+  local rel = path:sub(#dir + 2)
+  local folder = rel:match('^(.+)/[^/]+$') or 'Notes'
+  local title = 'New Note'
+  for _, n in ipairs(notes.state.notes_all or {}) do
+    if n.file == path then
+      title = n.title
+      break
+    end
+  end
+  return folder:gsub('%%', '%%%%') .. '/' .. title:gsub('%%', '%%%%')
+end
+
+function M.refresh_editor_statusline()
+  local st = require('notes').state
+  if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then return end
+  if not st.current_file then return end
+  vim.wo[st.edit_win].statusline = ' ' .. editor_path_label(st.current_file) .. ' %m'
+end
+
 function M.open_in_edit(path)
   local st = require('notes').state
   if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
@@ -424,7 +446,7 @@ function M.open_in_edit(path)
   vim.wo[st.edit_win].conceallevel = 2
   vim.wo[st.edit_win].concealcursor = 'nc'
   -- %m shows [+] while the note has unsaved changes, nothing once written
-  vim.wo[st.edit_win].statusline = ' Editor %m'
+  vim.wo[st.edit_win].statusline = ' ' .. editor_path_label(path) .. ' %m'
 
   M.set_nav_keymaps(buf)
   vim.keymap.set('n', cfg().keys.close, function()
