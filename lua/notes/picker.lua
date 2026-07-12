@@ -769,13 +769,14 @@ function M.cut_note()
   )
 end
 
--- Mark the selected folder for moving. The true root ("Notes") cannot be moved.
--- The user then navigates within the folders column (drill in/out, move the
--- cursor) to the destination and presses `paste`.
+-- Mark the selected folder for moving. Only a child row can be marked — the main
+-- row (the folder currently drilled into, or the true root) cannot be moved from
+-- inside itself. The user then navigates within the folders column (drill in/out,
+-- move the cursor) to the destination and presses `paste`.
 function M.cut_folder()
   local f = selected_folder()
-  if not f or f.folder == nil then
-    vim.notify('[notes.nvim] Cannot move the root folder', vim.log.levels.WARN)
+  if not f or f.is_main then
+    vim.notify('[notes.nvim] Cannot move the current folder from inside it', vim.log.levels.WARN)
     return
   end
   if folder_has_conflict(f.folder) then

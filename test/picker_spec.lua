@@ -1315,6 +1315,36 @@ do
   notes.close()
 end
 
+-- ── cut_folder: the main row (drilled-into folder) cannot be marked either ─────
+do
+  io.write('cut_folder refuses the main row from inside it\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'a note' })
+
+  fresh_open(dir)
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.change_folder() -- drill into A; row 1 is now the main row for A itself
+  check('drilled into A', notes.state.main_folder == 'A')
+
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- main row = A
+  picker.cut_folder()
+  check('main row (A itself) cannot be marked from inside it', notes.state.cut_folder == nil)
+
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A/B' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.cut_folder()
+  check('child row B can still be marked', notes.state.cut_folder == 'A/B')
+
+  notes.close()
+end
+
 -- ── cut_folder / cut_note are mutually exclusive ───────────────────────────────
 do
   io.write('cut_folder clears cut_note and vice versa\n')
