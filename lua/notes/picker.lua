@@ -740,6 +740,7 @@ function M.cut_note()
   -- второе нажатие x на уже помеченной заметке отменяет перемещение
   -- (без idiom `and/or`: nil ложно и сломал бы ветку отмены)
   local cancel = st.cut == it.file
+  local had_cut_folder = st.cut_folder ~= nil
   if cancel then
     st.cut = nil
   else
@@ -755,6 +756,11 @@ function M.cut_note()
   M.render_notes()
   if pos then
     pcall(api.nvim_win_set_cursor, st.list_win, pos)
+  end
+  if had_cut_folder then
+    -- a previously marked folder just got cleared above; without this the
+    -- folders column would keep showing its stale NotesCut highlight
+    M.render_folders()
   end
 
   vim.notify(
@@ -779,6 +785,7 @@ function M.cut_folder()
   local st = state()
   -- second press on the already-marked folder cancels the move
   local cancel = st.cut_folder == f.folder
+  local had_cut = st.cut ~= nil
   if cancel then
     st.cut_folder = nil
   else
@@ -792,6 +799,11 @@ function M.cut_folder()
   M.render_folders()
   if pos then
     pcall(api.nvim_win_set_cursor, st.folders_win, pos)
+  end
+  if had_cut then
+    -- a previously marked note just got cleared above; without this the notes
+    -- column would keep showing its stale NotesCut highlight
+    M.render_notes()
   end
 
   vim.notify(

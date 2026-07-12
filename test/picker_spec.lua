@@ -1322,10 +1322,21 @@ do
   writefile(dir .. '/root note', { 'root note' })
   writefile(dir .. '/A/note', { 'a note' })
 
+  local ns_cut = api.nvim_create_namespace('notes_list')
+  local function has_cut_mark(buf)
+    for _, m in ipairs(api.nvim_buf_get_extmarks(buf, ns_cut, 0, -1, { details = true })) do
+      if m[4].hl_group == 'NotesCut' then
+        return true
+      end
+    end
+    return false
+  end
+
   fresh_open(dir)
   api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
   picker.cut_note()
   check('note marked', notes.state.cut ~= nil)
+  check('note cut mark drawn', has_cut_mark(notes.state.list_buf))
 
   for i, f in ipairs(notes.state.folders) do
     if f.folder == 'A' then
@@ -1335,10 +1346,13 @@ do
   picker.cut_folder()
   check('marking a folder clears the marked note', notes.state.cut == nil)
   check('folder marked', notes.state.cut_folder == 'A')
+  check('stale note cut mark is gone', not has_cut_mark(notes.state.list_buf))
+  check('folder cut mark drawn', has_cut_mark(notes.state.folders_buf))
 
   api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
   picker.cut_note()
   check('marking a note clears the marked folder', notes.state.cut_folder == nil)
+  check('stale folder cut mark is gone', not has_cut_mark(notes.state.folders_buf))
 
   notes.close()
 end
