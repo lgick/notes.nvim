@@ -15,6 +15,11 @@ local ns_conflict = api.nvim_create_namespace('notes_conflict')
 local EMPTY_TITLE = 'New Note'
 local ROOT_LABEL = 'Notes' -- virtual folder for notes that live at the repo root
 
+-- Relative paths of every real folder at any depth from the last scan() ("Work",
+-- "Work/Projects"). Module-local: build_folders() derives the visible drill-down
+-- level from it; not part of the documented state.
+local all_folders = {}
+
 local function cfg()
   return require('notes').config
 end
@@ -29,15 +34,20 @@ local function is_conflicted(file)
 end
 M.is_conflicted = is_conflicted
 
--- True when any note inside `folder` (real folder name) is in a merge conflict.
+-- True when any note inside `folder` (relative path, any depth) OR any of its
+-- descendants is in a merge conflict. `folder == nil` means the root "Notes" main
+-- row, which covers the whole tree (root is the ancestor of every folder).
 local function folder_has_conflict(folder)
   local st = state()
   if not st.conflicts then
     return false
   end
+  local target = folder or ''
   for _, n in ipairs(st.notes_all or {}) do
-    if n.folder == folder and st.conflicts[n.file] then
-      return true
+    if st.conflicts[n.file] then
+      if target == '' or n.folder == target or n.folder:sub(1, #target + 1) == target .. '/' then
+        return true
+      end
     end
   end
   return false
@@ -82,11 +92,13 @@ function M.title_of(file)
   return EMPTY_TITLE, true
 end
 
--- Scan builds two structures: the folders column (one level deep) and the flat
--- notes list. Hidden entries (.git, .gitkeep) are skipped.
+-- Scan walks the notes directory recursively, at any depth. Builds the flat notes
+-- list (state.notes_all) and the flat list of all folder relative paths
+-- (all_folders); build_folders() later derives the visible drill-down level from
+-- the latter. Hidden entries (.git, .gitkeep) are skipped.
 function M.scan()
   local dir = cfg().dir
-  local real = {} -- real top-level folder names
+  local real = {} -- relative paths of every folder, any depth
   local notes = {}
 
   local function add_file(abs, folder)
@@ -101,22 +113,23 @@ function M.scan()
     }
   end
 
-  if fn.isdirectory(dir) == 1 then
-    for name, ftype in vim.fs.dir(dir) do
+  local function walk(abs_dir, rel)
+    for name, ftype in vim.fs.dir(abs_dir) do
       if name:sub(1, 1) ~= '.' then
-        local abs = dir .. '/' .. name
+        local abs = abs_dir .. '/' .. name
         if ftype == 'directory' then
-          real[#real + 1] = name
-          for sub, subtype in vim.fs.dir(abs) do
-            if sub:sub(1, 1) ~= '.' and subtype == 'file' then
-              add_file(abs .. '/' .. sub, name)
-            end
-          end
+          local child_rel = rel == '' and name or (rel .. '/' .. name)
+          real[#real + 1] = child_rel
+          walk(abs, child_rel)
         elseif ftype == 'file' then
-          add_file(abs, '')
+          add_file(abs, rel)
         end
       end
     end
+  end
+
+  if fn.isdirectory(dir) == 1 then
+    walk(dir, '')
   end
 
   table.sort(notes, function(a, b)
@@ -126,27 +139,57 @@ function M.scan()
     return a.mtime > b.mtime
   end)
 
-  -- folder recency = mtime of its most recently modified note;
-  -- empty folders fall back to the directory's own mtime (≈ creation time).
-  local fm = {}
-  local has_note = {}
-  for _, n in ipairs(notes) do
-    if n.folder ~= '' then
-      fm[n.folder] = math.max(fm[n.folder] or 0, n.mtime)
-      has_note[n.folder] = true
+  all_folders = real
+  state().notes_all = notes
+end
+
+-- Freshness of `folder_rel` = the most recent mtime among all notes in it and its
+-- descendants (recursively); if none exist anywhere in the subtree, falls back to
+-- the directory's own mtime (≈ creation time), so a new empty folder sorts to the
+-- top among its siblings.
+local function folder_recursive_mtime(folder_rel)
+  local max_mtime = 0
+  local has_note = false
+  for _, n in ipairs(state().notes_all or {}) do
+    if n.folder == folder_rel or n.folder:sub(1, #folder_rel + 1) == folder_rel .. '/' then
+      max_mtime = math.max(max_mtime, n.mtime)
+      has_note = true
     end
   end
-  for _, name in ipairs(real) do
-    if not fm[name] then
-      local s = vim.uv.fs_stat(dir .. '/' .. name)
-      fm[name] = s and s.mtime.sec or 0
+  if has_note then
+    return max_mtime, true
+  end
+  local s = vim.uv.fs_stat(cfg().dir .. '/' .. folder_rel)
+  return s and s.mtime.sec or 0, false
+end
+
+-- Builds the visible drill-down level of the folders column from all_folders:
+-- row 1 is the current level (main_folder, nil = root "Notes"), followed by its
+-- immediate children sorted by recursive freshness (same strict tie-break as
+-- before: freshness → note-bearing → name, since table.sort is not stable).
+function M.build_folders()
+  local main = state().main_folder
+  local folders = {
+    { name = main and main:match('[^/]+$') or ROOT_LABEL, folder = main, is_main = true },
+  }
+
+  local prefix = main and (main .. '/') or ''
+  local children = {}
+  for _, f in ipairs(all_folders) do
+    if main == nil then
+      if not f:find('/') then
+        children[#children + 1] = f
+      end
+    elseif f:sub(1, #prefix) == prefix and not f:sub(#prefix + 1):find('/') then
+      children[#children + 1] = f
     end
   end
-  -- Строгий детерминированный порядок (table.sort нестабилен для равных ключей).
-  -- Тай-брейки после свежести: при равной секунде папка с заметкой опережает пустую
-  -- (случай перемещения — приёмник получил заметку с mtime=now, а опустевший источник
-  -- поднял mtime своего каталога до той же секунды), затем добор по имени.
-  table.sort(real, function(a, b)
+
+  local fm, has_note = {}, {}
+  for _, f in ipairs(children) do
+    fm[f], has_note[f] = folder_recursive_mtime(f)
+  end
+  table.sort(children, function(a, b)
     local ma, mb = fm[a] or 0, fm[b] or 0
     if ma ~= mb then
       return ma > mb
@@ -158,28 +201,27 @@ function M.scan()
     return a < b
   end)
 
-  -- root "Notes" pinned first, then real folders by recency
-  local folders = { { name = ROOT_LABEL, folder = nil } }
-  for _, name in ipairs(real) do
-    folders[#folders + 1] = { name = name, folder = name }
+  for _, f in ipairs(children) do
+    folders[#folders + 1] = { name = f:match('[^/]+$'), folder = f, is_main = false }
   end
 
   state().folders = folders
-  state().notes_all = notes
 end
 
--- If the selected folder vanished (deleted/renamed), fall back to the root "Notes".
+-- If the drill-down level or the selected folder vanished (deleted/renamed), fall
+-- back up. Checked against disk, not state.folders: the folders column only shows
+-- one level at a time, so a stale current_folder from a different branch of the
+-- tree would not be found there even though it still exists.
 local function validate_folder()
   local st = state()
-  if st.current_folder == nil then
+  local dir = cfg().dir
+  if st.main_folder and fn.isdirectory(dir .. '/' .. st.main_folder) == 0 then
+    st.main_folder, st.current_folder = nil, nil
     return
   end
-  for _, f in ipairs(st.folders or {}) do
-    if f.folder == st.current_folder then
-      return
-    end
+  if st.current_folder and fn.isdirectory(dir .. '/' .. st.current_folder) == 0 then
+    st.current_folder = st.main_folder
   end
-  st.current_folder = nil
 end
 
 -- current_folder nil = root "Notes" → notes with folder == ''; otherwise that folder.
@@ -206,8 +248,9 @@ function M.render_folders()
   local n = #folders
   for i, f in ipairs(folders) do
     local line
-    if i == 1 then
-      line = f.name .. '/'
+    if f.is_main then
+      -- root → "Notes/"; drilled-in level → "Notes/<path> .." ('..' hints `o` = up)
+      line = f.folder and (ROOT_LABEL .. '/' .. f.folder .. ' ..') or (ROOT_LABEL .. '/')
     elseif i == n then
       line = '└─ ' .. f.name .. '/'
     else
@@ -220,22 +263,12 @@ function M.render_folders()
   api.nvim_buf_set_lines(st.folders_buf, 0, -1, false, lines)
   vim.bo[st.folders_buf].modifiable = false
 
-  -- folders (by folder key, '' = root) that contain at least one conflicted note
-  local conflicted = {}
-  if st.conflicts then
-    for _, note in ipairs(st.notes_all or {}) do
-      if st.conflicts[note.file] then
-        conflicted[note.folder] = true
-      end
-    end
-  end
-
   api.nvim_buf_clear_namespace(st.folders_buf, ns_folders, 0, -1)
   api.nvim_buf_clear_namespace(st.folders_buf, ns_conflict, 0, -1)
-  for i, f in ipairs(st.folders or {}) do
+  for i, f in ipairs(folders) do
     local hl = f.folder == st.current_folder and 'NotesDirActive' or 'NotesDir'
     api.nvim_buf_set_extmark(st.folders_buf, ns_folders, i - 1, 0, { line_hl_group = hl })
-    if conflicted[f.folder or ''] then
+    if folder_has_conflict(f.folder) then
       -- hl_group (combine) over the row text, NOT line_hl_group: the folder row
       -- already has a line_hl_group (NotesDir/Active) at the default extmark
       -- priority (4096), which would hide a lower-priority line_hl_group. An
@@ -378,6 +411,7 @@ end
 function M.populate()
   M.scan()
   validate_folder()
+  M.build_folders()
   M.filter()
   M.render_folders()
   M.render_notes()
@@ -423,6 +457,31 @@ function M.select_folder()
   M.render_notes()
 end
 
+-- `o` in the folders column: drill-down navigation. On the main row (row 1), go up
+-- one level (no-op at the true root); on a child row, enter that folder.
+function M.change_folder()
+  local f = selected_folder()
+  if not f then
+    return
+  end
+  local st = state()
+  if f.is_main then
+    if st.main_folder == nil then
+      return
+    end
+    local parent = st.main_folder:match('^(.*)/[^/]+$')
+    st.main_folder = parent
+    st.current_folder = parent
+  else
+    st.main_folder = f.folder
+    st.current_folder = f.folder
+  end
+  M.populate()
+  if st.folders_win and api.nvim_win_is_valid(st.folders_win) then
+    api.nvim_win_set_cursor(st.folders_win, { 1, 0 })
+  end
+end
+
 -- Unique ID filename (timestamp, no extension) inside target_dir.
 local function new_id(target_dir)
   local base = os.date('%Y%m%d%H%M%S')
@@ -465,17 +524,21 @@ function M.create_note()
   sync()
 end
 
--- Folders are one level deep: a name with '/' is rejected.
+-- New folder is created as a child of the current drill-down level (main_folder).
+-- A single leaf name is expected per call: '/' is rejected (deeper nesting is
+-- reached by drilling in with `o` and creating again).
 function M.create_folder()
   vim.ui.input({ prompt = 'New folder: ' }, function(input)
     if not input or input == '' then
       return
     end
     if input:find('/') then
-      vim.notify('[notes.nvim] Nested folders are not supported', vim.log.levels.WARN)
+      vim.notify('[notes.nvim] Folder name cannot contain "/"', vim.log.levels.WARN)
       return
     end
-    local path = cfg().dir .. '/' .. input
+    local main = state().main_folder
+    local rel = main and (main .. '/' .. input) or input
+    local path = cfg().dir .. '/' .. rel
     fn.mkdir(path, 'p')
     -- .gitkeep lets an otherwise empty folder be committed and synced
     fn.writefile({}, path .. '/.gitkeep')
@@ -484,6 +547,9 @@ function M.create_folder()
   end)
 end
 
+-- Rename works on the main row (the folder currently drilled into) or a child row;
+-- only the true root "Notes" (folder == nil) is rejected. The new name is a single
+-- leaf; the folder's parent path is unchanged.
 function M.rename_folder()
   local f = selected_folder()
   if not f or f.folder == nil then
@@ -491,12 +557,13 @@ function M.rename_folder()
     return
   end
 
-  vim.ui.input({ prompt = 'Rename folder: ', default = f.folder }, function(input)
-    if not input or input == '' or input == f.folder then
+  local leaf = f.folder:match('[^/]+$')
+  vim.ui.input({ prompt = 'Rename folder: ', default = leaf }, function(input)
+    if not input or input == '' or input == leaf then
       return
     end
     if input:find('/') then
-      vim.notify('[notes.nvim] Nested folders are not supported', vim.log.levels.WARN)
+      vim.notify('[notes.nvim] Folder name cannot contain "/"', vim.log.levels.WARN)
       return
     end
     if folder_has_conflict(f.folder) then
@@ -504,8 +571,10 @@ function M.rename_folder()
       return
     end
     local dir = cfg().dir
+    local parent = f.folder:match('^(.*)/[^/]+$')
+    local newrel = parent and (parent .. '/' .. input) or input
     local oldp = dir .. '/' .. f.folder
-    local newp = dir .. '/' .. input
+    local newp = dir .. '/' .. newrel
     local st = state()
     local cur = st.current_file
     local inside = cur and cur:sub(1, #oldp + 1) == oldp .. '/'
@@ -533,9 +602,25 @@ function M.rename_folder()
         pcall(api.nvim_buf_delete, old_buf, { force = true })
       end
     end
-    if st.current_folder == f.folder then
-      st.current_folder = input
+
+    -- current_folder/main_folder may point at the renamed folder itself or at one
+    -- of its descendants (we could be drilled several levels below it); rewrite
+    -- the f.folder prefix to newrel in both so navigation stays consistent
+    local function rewrite_prefix(path)
+      if path == nil then
+        return nil
+      end
+      if path == f.folder then
+        return newrel
+      end
+      if path:sub(1, #f.folder + 1) == f.folder .. '/' then
+        return newrel .. path:sub(#f.folder + 1)
+      end
+      return path
     end
+    st.current_folder = rewrite_prefix(st.current_folder)
+    st.main_folder = rewrite_prefix(st.main_folder)
+
     M.populate()
     sync()
   end)
@@ -579,14 +664,25 @@ function M.delete_folder()
     return
   end
   local path = cfg().dir .. '/' .. f.folder
-  local cur = state().current_file
+  local st = state()
+  local cur = st.current_file
   if cur and (cur == path or cur:sub(1, #path + 1) == path .. '/') then
     require('notes.ui').show_placeholder()
   end
   fn.delete(path, 'rf')
-  if state().current_folder == f.folder then
-    state().current_folder = nil
+
+  local function inside_deleted(p)
+    return p ~= nil and (p == f.folder or p:sub(1, #f.folder + 1) == f.folder .. '/')
   end
+  if inside_deleted(st.main_folder) then
+    -- the drilled-into level itself (or an ancestor of it) was deleted → go up to
+    -- its parent, which still exists
+    st.main_folder = f.folder:match('^(.*)/[^/]+$')
+    st.current_folder = st.main_folder
+  elseif inside_deleted(st.current_folder) then
+    st.current_folder = st.main_folder
+  end
+
   M.populate()
   sync()
 end
@@ -725,6 +821,7 @@ function M.attach_folders(buf)
   map(keys.create, M.create_folder, 'Notes: create folder')
   map(keys.rename, M.rename_folder, 'Notes: rename folder')
   map(keys.delete, M.delete_folder, 'Notes: delete folder')
+  map(keys.change_folder, M.change_folder, 'Notes: enter/up folder')
   map(keys.refresh, function()
     M.refresh()
     sync()

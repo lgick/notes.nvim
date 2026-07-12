@@ -564,6 +564,7 @@ function M.close()
   st.edit_buf = nil
   st.current_file = nil
   st.current_folder = nil
+  st.main_folder = nil
   st.cut = nil
   st.items = nil
   st.notes_all = nil

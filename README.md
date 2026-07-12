@@ -21,11 +21,22 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
  - [ ] Call the bank
 ```
 
+Folders nest to any depth, shown drill-down one level at a time (`o` to enter / go up):
+
+```
+──────────────┬──────────────────────────────────
+ Folders      │ Notes
+ Notes/Work .. │ 26.06.2026 - Sprint notes
+ ├─ Projects/  │
+ └─ Archive/   │
+──────────────┴──────────────────────────────────
+```
+
 ## Features
 
 - **Two-pane, macOS-Notes-style UI** — opens in a new full-screen tab: **folders** (left column) and **notes** (right column) on top, the editor on the bottom. Closing notes closes the tab.
 - **Title from content** — a note has no manual filename. Its title is the **first non-blank line** of its text; an empty note is titled **"New Note"** and is always pinned to the top of the list. On disk each note is an opaque ID file (`.md` extension, e.g. `20260627143000.md`), so editing a title never churns git history or collides. The notes column shows `dd.mm.yyyy - Title`, sorted by modification time (newest first). **The title in the list updates live as you type**, without saving.
-- **Folders, one level deep** — the folders column lists **"Notes"** (the root: notes that have no folder) plus your folders, sorted so the folder with the most recently edited note comes first. Selecting a folder filters the notes column to it. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
+- **Nested folders, drill-down navigation** — the folders column shows one level at a time: row 1 is the current level (**"Notes"** at the root, or `Notes/<path> ..` once you've drilled in), followed by its immediate subfolders, sorted so the one whose subtree has the most recently edited note comes first. Press `o` on a subfolder to enter it, or `o` on row 1 to go back up. Selecting a row filters the notes column to that folder's direct notes. New folders (`a`) are created inside the current level. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
 - **Move by cursor** — press `x` on a note to mark it (highlighted with the selection color); press `x` again on the same note to cancel. Then navigate to a folder in the folders column and press `p` to drop it there. The destination folder becomes the selected one and rises to the top of the folders column, and its notes fill the notes column.
 - **Native editing** — the editor window behaves like a normal `markdown` file window (`number`, `cursorline`, `signcolumn`), so global `InsertEnter`/`InsertLeave` styling and statusline plugins work inside it.
 - **Instant UI updates** — the note list updates immediately on `:w` (sort order, title); git sync runs in the background.
@@ -117,6 +128,7 @@ require('notes').setup({
     close         = 'q',     -- close notes (works from any notes window)
     window_nav    = '<C-w>', -- prefix; then h/j/k/l → move between windows
     toggle_panels = '<C-t>', -- hide/show Folders + Notes columns
+    change_folder = 'o',     -- folders: enter the folder under cursor / go up from row 1
   },
 
   -- Sync status icons shown in the tab label next to 'notes.nvim'.
@@ -148,9 +160,10 @@ All keys are configurable via `config.keys` (see above).
 | Key | Action | Where |
 |-----|--------|-------|
 | `j` / `k` | Move cursor → filter notes to that folder | folders |
-| `a` | Create a folder | folders |
+| `a` | Create a folder inside the current level | folders |
 | `r` | Rename the selected folder | folders |
 | `d` | Delete the selected folder (confirmation) | folders |
+| `o` | Enter the folder under cursor / go up from row 1 | folders |
 | `<CR>` | Focus the notes column | folders |
 | `p` | Drop the marked note into this folder | folders |
 | `j` / `k` | Move cursor + open note instantly | notes |
@@ -196,14 +209,16 @@ The notes tab is labelled `notes.nvim` plus a sync status indicator (e.g. `notes
 ```
 ~/.notes/                  ← config.dir
   20260626223010.md        ← a note: opaque ID file (.md); title = first line
-  Work/                    ← a folder (one level deep)
+  Work/                    ← a folder (any depth is supported)
     20260625101500.md      ← a note inside the folder
+    Projects/               ← a subfolder, entered with `o`
+      20260701090000.md
     .gitkeep               ← hidden marker so an empty folder still commits
   Personal/
     .gitkeep
 ```
 
-Each note is an ID-named `.md` file; its title in the list is read from the first non-blank line of its content. The virtual "Notes" entry in the folders column is the repo root (notes with no folder). Folders are one level deep — create with `a`, rename with `r`, delete with `d`; move notes between folders with `x` (mark) then `p` (paste into the selected folder).
+Each note is an ID-named `.md` file; its title in the list is read from the first non-blank line of its content. The virtual "Notes" entry in the folders column is the repo root (notes with no folder). Folders can nest to any depth; the folders column shows one level at a time — press `o` to drill in or go back up. Create with `a` (inside the current level), rename with `r`, delete with `d`; move notes between folders with `x` (mark) then `p` (paste into the selected folder). Moving an entire folder is not supported yet — only individual notes.
 
 ### Git sync behaviour
 

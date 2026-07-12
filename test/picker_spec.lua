@@ -962,6 +962,255 @@ do
   check('plugin closed', not notes.is_open())
 end
 
+-- ── recursive scan: notes at arbitrary depth get full relative folder path ────
+do
+  io.write('recursive scan\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'deep note' })
+
+  fresh_open(dir)
+  local found
+  for _, n in ipairs(notes.state.notes_all) do
+    if n.title == 'deep note' then
+      found = n
+    end
+  end
+  check('note folder is full relative path', found and found.folder == 'A/B', found and found.folder)
+
+  notes.close()
+end
+
+-- ── drill-down: root shows only top-level children, not grandchildren ─────────
+do
+  io.write('build_folders drill-down\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'deep note' })
+
+  fresh_open(dir)
+  check('root main row is Notes', notes.state.folders[1].is_main and notes.state.folders[1].folder == nil)
+  check(
+    'root shows only A, not B',
+    #notes.state.folders == 2 and notes.state.folders[2].folder == 'A',
+    folder_names()[2]
+  )
+
+  notes.state.main_folder = 'A'
+  notes.state.current_folder = 'A'
+  picker.build_folders()
+  check('drilled main row is A', notes.state.folders[1].is_main and notes.state.folders[1].folder == 'A')
+  check(
+    'A shows only its own child B',
+    #notes.state.folders == 2 and notes.state.folders[2].folder == 'A/B',
+    notes.state.folders[2] and notes.state.folders[2].folder
+  )
+
+  notes.close()
+end
+
+-- ── change_folder: drill in / go up via `o` ────────────────────────────────────
+do
+  io.write('change_folder navigation\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'deep note' })
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.folders_win, { 2, 0 }) -- A
+  picker.change_folder()
+  check('drilled into A', notes.state.main_folder == 'A' and notes.state.current_folder == 'A')
+  check('cursor reset to row 1', api.nvim_win_get_cursor(notes.state.folders_win)[1] == 1)
+  check(
+    'B is now a child row',
+    notes.state.folders[2] and notes.state.folders[2].folder == 'A/B',
+    notes.state.folders[2] and notes.state.folders[2].folder
+  )
+
+  api.nvim_win_set_cursor(notes.state.folders_win, { 2, 0 }) -- A/B
+  picker.change_folder()
+  check('drilled into A/B', notes.state.main_folder == 'A/B')
+
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- main row = A/B
+  picker.change_folder()
+  check('went up to A', notes.state.main_folder == 'A' and notes.state.current_folder == 'A')
+
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- main row = A
+  picker.change_folder()
+  check('went up to root', notes.state.main_folder == nil and notes.state.current_folder == nil)
+
+  picker.change_folder() -- cursor already on row 1 (true root main row)
+  check('no-op at true root', notes.state.main_folder == nil)
+
+  notes.close()
+end
+
+-- ── recursive freshness: a note in a grandchild bumps its ancestor folder ─────
+do
+  io.write('recursive folder freshness\n')
+  local dir = tmpdir()
+  writefile(dir .. '/Old/o1', { 'old' })
+  writefile(dir .. '/Fresh/Sub/f1', { 'fresh, deeply nested' })
+  fn.system({ 'touch', '-t', '202001010000', dir .. '/Old/o1' })
+  fn.system({ 'touch', dir .. '/Fresh/Sub/f1' })
+
+  fresh_open(dir)
+  local names = folder_names()
+  check(
+    'Fresh (via nested note) sorts before Old',
+    names[2] == 'Fresh' and names[3] == 'Old',
+    table.concat(names, ',')
+  )
+
+  notes.close()
+end
+
+-- ── create_folder creates inside the current drill-down level ─────────────────
+do
+  io.write('create folder inside current level\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/note', { 'a note' })
+
+  fresh_open(dir)
+  notes.state.main_folder = 'A'
+  notes.state.current_folder = 'A'
+  picker.build_folders()
+
+  local orig = vim.ui.input
+  vim.ui.input = function(_, cb) cb('Sub') end
+  picker.create_folder()
+  vim.ui.input = orig
+
+  check('subfolder created on disk', fn.isdirectory(dir .. '/A/Sub') == 1)
+  check('.gitkeep written', fn.filereadable(dir .. '/A/Sub/.gitkeep') == 1)
+
+  notes.close()
+end
+
+-- ── rename a nested folder rewrites current_folder/main_folder prefixes ───────
+do
+  io.write('rename nested folder rewrites prefixes\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'deep note' })
+
+  fresh_open(dir)
+  notes.state.main_folder = 'A/B'
+  notes.state.current_folder = 'A/B'
+  picker.build_folders()
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- main row = A/B itself
+
+  local orig = vim.ui.input
+  vim.ui.input = function(_, cb) cb('Renamed') end
+  picker.rename_folder()
+  vim.ui.input = orig
+
+  check('folder renamed on disk', fn.isdirectory(dir .. '/A/Renamed') == 1 and fn.isdirectory(dir .. '/A/B') == 0)
+  check('note moved with folder', fn.filereadable(dir .. '/A/Renamed/note') == 1)
+  check('main_folder prefix rewritten', notes.state.main_folder == 'A/Renamed', notes.state.main_folder)
+  check('current_folder prefix rewritten', notes.state.current_folder == 'A/Renamed', notes.state.current_folder)
+
+  notes.close()
+end
+
+-- ── delete a nested folder: current_folder/main_folder fall back correctly ────
+do
+  io.write('delete nested folder navigation fallback\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'deep note' })
+
+  fresh_open(dir)
+  notes.state.main_folder = 'A'
+  notes.state.current_folder = 'A/B'
+  picker.build_folders()
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A/B' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+
+  local orig = vim.fn.confirm
+  vim.fn.confirm = function() return 1 end
+  picker.delete_folder()
+  vim.fn.confirm = orig
+
+  check('B deleted from disk', fn.isdirectory(dir .. '/A/B') == 0)
+  check('main_folder unaffected (A still exists)', notes.state.main_folder == 'A')
+  check('current_folder falls back to main_folder', notes.state.current_folder == 'A')
+
+  notes.close()
+end
+
+-- ── deleting the drilled-into folder itself goes up to its parent ─────────────
+do
+  io.write('delete main-row folder goes up\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'deep note' })
+
+  fresh_open(dir)
+  notes.state.main_folder = 'A/B'
+  notes.state.current_folder = 'A/B'
+  picker.build_folders()
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- main row itself (A/B)
+
+  local orig = vim.fn.confirm
+  vim.fn.confirm = function() return 1 end
+  picker.delete_folder()
+  vim.fn.confirm = orig
+
+  check('A/B deleted from disk', fn.isdirectory(dir .. '/A/B') == 0)
+  check('main_folder goes up to A', notes.state.main_folder == 'A', notes.state.main_folder)
+  check('current_folder goes up to A', notes.state.current_folder == 'A', notes.state.current_folder)
+
+  notes.close()
+end
+
+-- ── recursive conflict highlight: a deeply nested conflict highlights ancestors ─
+do
+  io.write('recursive conflict highlight\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/c1', { 'conflicted deep note' })
+
+  fresh_open(dir)
+  local cfile
+  for _, n in ipairs(notes.state.notes_all) do
+    if n.folder == 'A/B' then
+      cfile = n.file
+    end
+  end
+  notes.state.conflicts = { [cfile] = true }
+  picker.populate() -- root level: ancestor A must show as conflicted
+
+  local ns_conflict = api.nvim_create_namespace('notes_conflict')
+  local a_row
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      a_row = i - 1
+    end
+  end
+  local fmarks = api.nvim_buf_get_extmarks(notes.state.folders_buf, ns_conflict, 0, -1, { details = true })
+  local found = false
+  for _, m in ipairs(fmarks) do
+    if m[2] == a_row and m[4].hl_group == 'NotesConflict' then
+      found = true
+    end
+  end
+  check('ancestor folder A highlighted for a deeply nested conflict', found)
+
+  notes.close()
+end
+
+-- ── validate_folder: disk-missing current_folder falls back to main_folder ────
+do
+  io.write('validate_folder disk check\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/note', { 'a note' })
+
+  fresh_open(dir)
+  notes.state.main_folder = nil
+  notes.state.current_folder = 'Ghost' -- never existed on disk
+  picker.populate()
+  check('current_folder reset (never existed on disk)', notes.state.current_folder == nil)
+
+  notes.close()
+end
+
 io.write('\n')
 if failures > 0 then
   io.write(failures .. ' check(s) FAILED\n')

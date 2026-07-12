@@ -23,6 +23,7 @@ M.config = {
     close = 'q', -- close notes (works from any notes window)
     window_nav = '<C-w>', -- prefix: h/j/k/l → move between windows (wincmd)
     toggle_panels = '<C-t>', -- hide/show Folders + Notes columns
+    change_folder = 'o', -- folders: enter the folder under cursor / go up from the main row
   },
   -- Override sync status icons; nil = auto (Nerd Font glyph if nvim-web-devicons loaded, else Unicode)
   sync_icons = nil,
@@ -39,9 +40,10 @@ M.state = {
   edit_win = nil,
   edit_buf = nil,
   current_file = nil, -- path of the file currently open in the editor
-  current_folder = nil, -- selected folder name; nil = "Notes" (root notes)
+  current_folder = nil, -- selected folder path (relative, any depth); nil = "Notes" (root)
+  main_folder = nil, -- relative path of the folders column's current drill-down level; nil = root
   cut = nil, -- path of the note marked for moving (set by `x`)
-  folders = nil, -- array of { name, folder }; folder nil = the virtual root "Notes" entry
+  folders = nil, -- array of { name, folder, is_main }; folders[1] is the main row
   notes_all = nil, -- full scan: array of { file, folder, title, mtime, empty }
   items = nil, -- filtered notes for the current folder
   conflicts = nil, -- set { [abs path] = true } of unmerged (conflicted) notes; nil = none
@@ -64,6 +66,7 @@ function M.is_open()
     st.edit_buf = nil
     st.current_file = nil
     st.current_folder = nil
+    st.main_folder = nil
     st.cut = nil
     st.items = nil
     st.notes_all = nil
