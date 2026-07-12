@@ -24,19 +24,19 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 Folders nest to any depth, shown drill-down one level at a time (`o` to enter / go up):
 
 ```
-──────────────┬──────────────────────────────────
- Folders      │ Notes
- Notes/Work .. │ 26.06.2026 - Sprint notes
- ├─ Projects/  │
- └─ Archive/   │
-──────────────┴──────────────────────────────────
+────────────────┬────────────────────────────────
+ Folders        │ Notes
+ Notes/Work/ .. │ 26.06.2026 - Sprint notes
+ ├─ Projects/   │
+ └─ Archive/    │
+────────────────┴────────────────────────────────
 ```
 
 ## Features
 
 - **Two-pane, macOS-Notes-style UI** — opens in a new full-screen tab: **folders** (left column) and **notes** (right column) on top, the editor on the bottom. Closing notes closes the tab.
 - **Title from content** — a note has no manual filename. Its title is the **first non-blank line** of its text; an empty note is titled **"New Note"** and is always pinned to the top of the list. On disk each note is an opaque ID file (`.md` extension, e.g. `20260627143000.md`), so editing a title never churns git history or collides. The notes column shows `dd.mm.yyyy - Title`, sorted by modification time (newest first). **The title in the list updates live as you type**, without saving.
-- **Nested folders, drill-down navigation** — the folders column shows one level at a time: row 1 is the current level (**"Notes"** at the root, or `Notes/<path> ..` once you've drilled in), followed by its immediate subfolders, sorted so the one whose subtree has the most recently edited note comes first. Press `o` on a subfolder to enter it, or `o` on row 1 to go back up. Selecting a row filters the notes column to that folder's direct notes. New folders (`a`) are created inside the current level. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
+- **Nested folders, drill-down navigation** — the folders column shows one level at a time: row 1 is the current level (**"Notes"** at the root, or `Notes/<path>/ ..` once you've drilled in), followed by its immediate subfolders, sorted so the one whose subtree has the most recently edited note comes first. Press `o` on a subfolder to enter it, or `o` on row 1 to go back up. Selecting a row filters the notes column to that folder's direct notes. New folders (`a`) are created inside the current level. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
 - **Move by cursor** — press `x` on a note to mark it (highlighted with the selection color); press `x` again on the same note to cancel. Then navigate to a folder in the folders column and press `p` to drop it there. The destination folder becomes the selected one and rises to the top of the folders column, and its notes fill the notes column.
 - **Native editing** — the editor window behaves like a normal `markdown` file window (`number`, `cursorline`, `signcolumn`), so global `InsertEnter`/`InsertLeave` styling and statusline plugins work inside it.
 - **Instant UI updates** — the note list updates immediately on `:w` (sort order, title); git sync runs in the background.

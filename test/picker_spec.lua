@@ -1007,6 +1007,30 @@ do
   notes.close()
 end
 
+-- ── deep path on the main row is truncated from the left, not the right ───────
+do
+  io.write('main row left-truncation at narrow width\n')
+  local dir = tmpdir()
+  writefile(dir .. '/Work/Projects/Q3/Reports/note', { 'deep note' })
+
+  notes.state.synced = false
+  notes.state.tab = nil
+  notes.setup({ dir = dir, repo = '', folders_width = 20 })
+  notes.open()
+
+  notes.state.main_folder = 'Work/Projects/Q3/Reports'
+  notes.state.current_folder = 'Work/Projects/Q3/Reports'
+  picker.populate()
+
+  local line = api.nvim_buf_get_lines(notes.state.folders_buf, 0, 1, false)[1]
+  check('main row starts with ellipsis', line:sub(1, 3) == '\226\128\166', line)
+  check('main row ends with the up hint', line:sub(-4) == '/ ..', line)
+  check('current folder name is fully visible', line:find('Reports', 1, true) ~= nil, line)
+  check('main row fits within the folders column width', fn.strdisplaywidth(line) <= 20, line)
+
+  notes.close()
+end
+
 -- ── change_folder: drill in / go up via `o` ────────────────────────────────────
 do
   io.write('change_folder navigation\n')

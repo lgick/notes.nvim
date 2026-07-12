@@ -237,11 +237,32 @@ function M.filter()
   st.items = out
 end
 
+-- Truncates s from the left with a leading '…' so its tail (the current folder's
+-- name) stays visible within width, instead of Neovim's default right-truncation
+-- (which would hide the name at deep nesting). No-op if s already fits.
+local function fit_left(s, width)
+  if fn.strdisplaywidth(s) <= width then
+    return s
+  end
+  local total = fn.strchars(s)
+  for drop = 1, total - 1 do
+    local tail = fn.strcharpart(s, drop, total - drop)
+    if fn.strdisplaywidth('…' .. tail) <= width then
+      return '…' .. tail
+    end
+  end
+  return '…'
+end
+
 function M.render_folders()
   local st = state()
   if not (st.folders_buf and api.nvim_buf_is_valid(st.folders_buf)) then
     return
   end
+
+  local width = (st.folders_win and api.nvim_win_is_valid(st.folders_win))
+      and api.nvim_win_get_width(st.folders_win)
+    or cfg().folders_width
 
   local lines = {}
   local folders = st.folders or {}
@@ -249,8 +270,9 @@ function M.render_folders()
   for i, f in ipairs(folders) do
     local line
     if f.is_main then
-      -- root → "Notes/"; drilled-in level → "Notes/<path> .." ('..' hints `o` = up)
-      line = f.folder and (ROOT_LABEL .. '/' .. f.folder .. ' ..') or (ROOT_LABEL .. '/')
+      -- root → "Notes/"; drilled-in level → "Notes/<path>/ .." ('..' hints `o` = up)
+      line = f.folder and (ROOT_LABEL .. '/' .. f.folder .. '/ ..') or (ROOT_LABEL .. '/')
+      line = fit_left(line, width)
     elseif i == n then
       line = '└─ ' .. f.name .. '/'
     else
