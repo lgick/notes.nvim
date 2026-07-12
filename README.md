@@ -37,10 +37,10 @@ Folders nest to any depth, shown drill-down one level at a time (`o` to enter / 
 - **Two-pane, macOS-Notes-style UI** — opens in a new full-screen tab: **folders** (left column) and **notes** (right column) on top, the editor on the bottom. Closing notes closes the tab.
 - **Title from content** — a note has no manual filename. Its title is the **first non-blank line** of its text; an empty note is titled **"New Note"** and is always pinned to the top of the list. On disk each note is an opaque ID file (`.md` extension, e.g. `20260627143000.md`), so editing a title never churns git history or collides. The notes column shows `dd.mm.yyyy - Title`, sorted by modification time (newest first). **The title in the list updates live as you type**, without saving.
 - **Nested folders, drill-down navigation** — the folders column shows one level at a time: row 1 is the current level (**"Notes"** at the root, or `Notes/<path>/ ..` once you've drilled in), followed by its immediate subfolders, sorted so the one whose subtree has the most recently edited note comes first. Press `o` on a subfolder to enter it, or `o` on row 1 to go back up. Selecting a row filters the notes column to that folder's direct notes. New folders (`a`) are created inside the current level. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
-- **Move by cursor** — press `x` on a note to mark it (highlighted with the selection color); press `x` again on the same note to cancel. Then navigate to a folder in the folders column and press `p` to drop it there. The destination folder becomes the selected one and rises to the top of the folders column, and its notes fill the notes column.
+- **Move by cursor** — press `x` on a note (or a folder) to mark it (highlighted with the selection color); press `x` again on the same item to cancel. For a note, navigate to a folder in the folders column and press `p` to drop it there. For a folder, navigate within the folders column itself (drill in/out with `o`, move the cursor) to the destination and press `p`. The destination folder becomes the selected one and rises to the top of the folders column; for a moved folder, the column also drills into the destination so the moved folder shows up as one of its children. A folder can't be moved into itself or one of its own subfolders, and the root ("Notes") can't be moved.
 - **Native editing** — the editor window behaves like a normal `markdown` file window (`number`, `cursorline`, `signcolumn`), so global `InsertEnter`/`InsertLeave` styling and statusline plugins work inside it.
 - **Instant UI updates** — the note list updates immediately on `:w` (sort order, title); git sync runs in the background.
-- **Full management** — same keys in each column: `a` creates (a note in the notes column, a folder in the folders column), `d` deletes; notes also support move (`x` + `p`), folders also support rename (`r`); refresh (`R`). **Every create/delete/move/rename immediately commits and pushes to GitHub.**
+- **Full management** — same keys in each column: `a` creates (a note in the notes column, a folder in the folders column), `d` deletes, `x` marks for move, `p` pastes; folders also support rename (`r`); refresh (`R`). **Every create/delete/move/rename immediately commits and pushes to GitHub.**
 - **Configurable keymaps** — every action, the close key, and panel-focus keys are remappable via `config.keys`.
 - **Git sync** — on first open: `git clone` (if the directory doesn't exist) then `git pull` (merge). On `:w`: commit + merge + push. On any create/delete/move/rename: immediate commit + merge + push. On close (`q`): commit + merge + push of any remaining changes.
 - **Conflicts stay in the file** — a merge conflict is left as standard git markers in the note (no dialog). The conflicted note title and its folder name get a wavy error underline; edit the markers out, save, and the merge completes and pushes. Move/rename/delete of a conflicted note is blocked until you resolve it.
@@ -165,7 +165,8 @@ All keys are configurable via `config.keys` (see above).
 | `d` | Delete the selected folder (confirmation) | folders |
 | `o` | Enter the folder under cursor / go up from row 1 | folders |
 | `<CR>` | Focus the notes column | folders |
-| `p` | Drop the marked note into this folder | folders |
+| `x` | Mark the folder for moving (then navigate within Folders and press `p`) | folders |
+| `p` | Drop the marked note/folder into this folder | folders |
 | `j` / `k` | Move cursor + open note instantly | notes |
 | `<CR>` | Focus the editor window | notes |
 | `a` | Create a new note in the current folder (or root) | notes |
@@ -191,7 +192,7 @@ Override these to customize colors (they link to sensible defaults):
 | `NotesTitle` | `bold` | the title text of each note row (after the date prefix) |
 | `NotesActive` | `CursorLine` | the currently open note in the notes column |
 | `NotesDirActive` | computed | the selected folder in the folders column |
-| `NotesCut` | `Visual` | the note marked for moving (`x`) |
+| `NotesCut` | `Visual` | the note or folder marked for moving (`x`) |
 | `NotesConflict` | undercurl, `sp` from `DiagnosticError` | wavy error underline on a note in a merge conflict, and on its folder |
 
 `NotesDirActive` is computed at open time from the resolved colors of `Directory` (fg) and `CursorLine` (bg), combining the folder color with the selection background. Override it with an explicit `nvim_set_hl` call in your config after setup.
@@ -218,7 +219,7 @@ The notes tab is labelled `notes.nvim` plus a sync status indicator (e.g. `notes
     .gitkeep
 ```
 
-Each note is an ID-named `.md` file; its title in the list is read from the first non-blank line of its content. The virtual "Notes" entry in the folders column is the repo root (notes with no folder). Folders can nest to any depth; the folders column shows one level at a time — press `o` to drill in or go back up. Create with `a` (inside the current level), rename with `r`, delete with `d`; move notes between folders with `x` (mark) then `p` (paste into the selected folder). Moving an entire folder is not supported yet — only individual notes.
+Each note is an ID-named `.md` file; its title in the list is read from the first non-blank line of its content. The virtual "Notes" entry in the folders column is the repo root (notes with no folder). Folders can nest to any depth; the folders column shows one level at a time — press `o` to drill in or go back up. Create with `a` (inside the current level), rename with `r`, delete with `d`; move notes between folders with `x` (mark) then `p` (paste into the selected folder). Whole folders can be moved the same way (`x` then `p`), navigating to the destination within the folders column itself instead of switching columns; a folder can't be moved into itself or one of its own subfolders, and the root ("Notes") can't be moved.
 
 ### Git sync behaviour
 

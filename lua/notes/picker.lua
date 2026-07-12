@@ -287,6 +287,7 @@ function M.render_folders()
 
   api.nvim_buf_clear_namespace(st.folders_buf, ns_folders, 0, -1)
   api.nvim_buf_clear_namespace(st.folders_buf, ns_conflict, 0, -1)
+  api.nvim_buf_clear_namespace(st.folders_buf, ns, 0, -1)
   for i, f in ipairs(folders) do
     local hl = f.folder == st.current_folder and 'NotesDirActive' or 'NotesDir'
     api.nvim_buf_set_extmark(st.folders_buf, ns_folders, i - 1, 0, { line_hl_group = hl })
@@ -301,6 +302,15 @@ function M.render_folders()
         hl_mode = 'combine',
         priority = 300,
       })
+    end
+    if f.folder ~= nil and f.folder == st.cut_folder then
+      api.nvim_buf_set_extmark(
+        st.folders_buf,
+        ns,
+        i - 1,
+        0,
+        { end_col = #lines[i], hl_group = 'NotesCut', hl_mode = 'combine', priority = 200 }
+      )
     end
   end
 end
@@ -727,6 +737,7 @@ function M.cut_note()
     st.cut = nil
   else
     st.cut = it.file
+    st.cut_folder = nil -- a note and a folder can't be marked for moving at the same time
   end
 
   -- render_notes сбрасывает курсор на строку 1; при пометке список не меняется,
@@ -745,6 +756,136 @@ function M.cut_note()
   )
 end
 
+-- Mark the selected folder for moving. The true root ("Notes") cannot be moved.
+-- The user then navigates within the folders column (drill in/out, move the
+-- cursor) to the destination and presses `paste`.
+function M.cut_folder()
+  local f = selected_folder()
+  if not f or f.folder == nil then
+    vim.notify('[notes.nvim] Cannot move the root folder', vim.log.levels.WARN)
+    return
+  end
+  if folder_has_conflict(f.folder) then
+    notify_conflict_block()
+    return
+  end
+  local st = state()
+  -- second press on the already-marked folder cancels the move
+  local cancel = st.cut_folder == f.folder
+  if cancel then
+    st.cut_folder = nil
+  else
+    st.cut_folder = f.folder
+    st.cut = nil -- a note and a folder can't be marked for moving at the same time
+  end
+
+  local pos = (st.folders_win and api.nvim_win_is_valid(st.folders_win))
+      and api.nvim_win_get_cursor(st.folders_win)
+    or nil
+  M.render_folders()
+  if pos then
+    pcall(api.nvim_win_set_cursor, st.folders_win, pos)
+  end
+
+  vim.notify(
+    cancel and '[notes.nvim] Move cancelled'
+      or ('[notes.nvim] Navigate to the destination folder and press ' .. cfg().keys.paste)
+  )
+end
+
+-- p in the folders column: drop the marked folder into the selected folder (or
+-- root). Blocked if the marked folder holds a conflict, or if the destination is
+-- the folder itself or one of its own descendants (can't nest a folder in itself).
+function M.paste_folder()
+  local st = state()
+  local src = st.cut_folder
+  if not src then
+    return
+  end
+  if folder_has_conflict(src) then
+    notify_conflict_block()
+    return
+  end
+
+  local f = selected_folder()
+  if not f then
+    return
+  end
+  local dest = f.folder -- nil = root
+  local into_self = dest ~= nil and (dest == src or dest:sub(1, #src + 1) == src .. '/')
+  if into_self then
+    vim.notify('[notes.nvim] Cannot move a folder into itself', vim.log.levels.WARN)
+    return
+  end
+
+  local dir = cfg().dir
+  local leaf = src:match('[^/]+$')
+  local newrel = dest and (dest .. '/' .. leaf) or leaf
+  st.cut_folder = nil
+
+  if newrel == src then
+    M.render_folders()
+    return
+  end
+
+  local oldp = dir .. '/' .. src
+  local newp = dir .. '/' .. newrel
+  if fn.isdirectory(newp) == 1 then
+    vim.notify(
+      '[notes.nvim] A folder named "' .. leaf .. '" already exists there',
+      vim.log.levels.WARN
+    )
+    return
+  end
+
+  local cur = st.current_file
+  local inside = cur and cur:sub(1, #oldp + 1) == oldp .. '/'
+
+  -- persist unsaved edits before the rename so they survive the directory move
+  if
+    inside
+    and st.edit_buf
+    and api.nvim_buf_is_valid(st.edit_buf)
+    and vim.bo[st.edit_buf].buftype == ''
+    and vim.bo[st.edit_buf].modified
+  then
+    api.nvim_buf_call(st.edit_buf, function()
+      vim.cmd('silent write')
+    end)
+  end
+
+  fn.rename(oldp, newp)
+
+  -- fn.rename preserves mtime; bump it so the destination floats to the top of
+  -- the folders column (folder recency = the newest mtime in its subtree)
+  local now = os.time()
+  vim.uv.fs_utime(newp, now, now)
+
+  if inside then
+    local old_buf = st.edit_buf
+    require('notes.ui').open_in_edit(newp .. cur:sub(#oldp + 1))
+    if old_buf and old_buf ~= st.edit_buf and api.nvim_buf_is_valid(old_buf) then
+      pcall(api.nvim_buf_delete, old_buf, { force = true })
+    end
+  end
+
+  -- drill into the destination so its children (including the moved folder) show
+  st.main_folder = dest
+  st.current_folder = dest
+  M.populate()
+
+  if st.folders_win and api.nvim_win_is_valid(st.folders_win) then
+    for i, folder in ipairs(st.folders or {}) do
+      if folder.folder == newrel then
+        api.nvim_win_set_cursor(st.folders_win, { i, 0 })
+        break
+      end
+    end
+  end
+
+  sync()
+end
+
 -- <CR> in the folders column: focus the notes column.
 function M.folder_enter()
   local st = state()
@@ -753,9 +894,14 @@ function M.folder_enter()
   end
 end
 
--- p in the folders column: drop the marked note into the selected folder.
+-- p in the folders column: drop the marked note into the selected folder, or (if
+-- a folder is marked instead) dispatch to paste_folder.
 function M.paste_note()
   local st = state()
+  if st.cut_folder then
+    M.paste_folder()
+    return
+  end
   if not st.cut then
     return
   end
@@ -840,6 +986,7 @@ function M.attach_folders(buf)
   map('l', '<Nop>', 'Notes: no horizontal move')
   map(keys.open_file, M.folder_enter, 'Notes: focus notes column')
   map(keys.paste, M.paste_note, 'Notes: paste note into folder')
+  map(keys.move, M.cut_folder, 'Notes: mark folder for moving')
   map(keys.create, M.create_folder, 'Notes: create folder')
   map(keys.rename, M.rename_folder, 'Notes: rename folder')
   map(keys.delete, M.delete_folder, 'Notes: delete folder')

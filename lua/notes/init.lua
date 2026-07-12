@@ -14,8 +14,8 @@ M.config = {
     create = 'a', -- folders: create a folder; notes: create a note (in the current folder)
     delete = 'd', -- folders: delete the folder; notes: delete the note
     rename = 'r', -- folders: rename the selected folder
-    move = 'x', -- notes: mark note for moving
-    paste = 'p', -- folders: drop the marked note into the selected folder
+    move = 'x', -- notes: mark note for moving; folders: mark folder for moving
+    paste = 'p', -- folders: drop the marked note/folder into the selected folder
     refresh = 'R', -- refresh the list
     open_github = 'O', -- open the notes repo in the browser
     scroll_down = '<C-n>', -- notes: scroll the open note down
@@ -43,6 +43,7 @@ M.state = {
   current_folder = nil, -- selected folder path (relative, any depth); nil = "Notes" (root)
   main_folder = nil, -- relative path of the folders column's current drill-down level; nil = root
   cut = nil, -- path of the note marked for moving (set by `x`)
+  cut_folder = nil, -- relative path of the folder marked for moving (set by `x` in the folders column)
   folders = nil, -- array of { name, folder, is_main }; folders[1] is the main row
   notes_all = nil, -- full scan: array of { file, folder, title, mtime, empty }
   items = nil, -- filtered notes for the current folder
@@ -68,6 +69,7 @@ function M.is_open()
     st.current_folder = nil
     st.main_folder = nil
     st.cut = nil
+    st.cut_folder = nil
     st.items = nil
     st.notes_all = nil
     st.folders = nil

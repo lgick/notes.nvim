@@ -1235,6 +1235,200 @@ do
   notes.close()
 end
 
+-- ── cut_folder: mark/cancel, true root refused ─────────────────────────────────
+do
+  io.write('cut_folder mark/cancel\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/note', { 'a note' })
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- true root
+  picker.cut_folder()
+  check('true root cannot be marked', notes.state.cut_folder == nil)
+
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.cut_folder()
+  check('folder A marked', notes.state.cut_folder == 'A')
+  picker.cut_folder() -- second press cancels
+  check('second x cancels', notes.state.cut_folder == nil)
+
+  notes.close()
+end
+
+-- ── cut_folder / cut_note are mutually exclusive ───────────────────────────────
+do
+  io.write('cut_folder clears cut_note and vice versa\n')
+  local dir = tmpdir()
+  writefile(dir .. '/root note', { 'root note' })
+  writefile(dir .. '/A/note', { 'a note' })
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.cut_note()
+  check('note marked', notes.state.cut ~= nil)
+
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.cut_folder()
+  check('marking a folder clears the marked note', notes.state.cut == nil)
+  check('folder marked', notes.state.cut_folder == 'A')
+
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.cut_note()
+  check('marking a note clears the marked folder', notes.state.cut_folder == nil)
+
+  notes.close()
+end
+
+-- ── paste_folder: moves a nested folder to a sibling, notes travel with it ─────
+do
+  io.write('paste_folder moves nested folder to sibling\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'note in B' })
+  fn.mkdir(dir .. '/C', 'p')
+  fn.writefile({}, dir .. '/C/.gitkeep')
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.folders_win, { 2, 0 }) -- A
+  picker.change_folder() -- drill into A
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A/B' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.cut_folder()
+  check('B marked', notes.state.cut_folder == 'A/B')
+
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- main row = A
+  picker.change_folder() -- go up to root
+  check('back at root', notes.state.main_folder == nil)
+
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'C' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.paste_note() -- bound key dispatches to paste_folder when a folder is cut
+
+  check(
+    'B moved on disk',
+    fn.isdirectory(dir .. '/A/B') == 0 and fn.isdirectory(dir .. '/C/B') == 1
+  )
+  check('note travelled with the folder', fn.filereadable(dir .. '/C/B/note') == 1)
+  check('cut_folder cleared', notes.state.cut_folder == nil)
+  check(
+    'drilled into destination C',
+    notes.state.main_folder == 'C' and notes.state.current_folder == 'C'
+  )
+  check(
+    'cursor lands on the moved folder row',
+    (function()
+      local row = api.nvim_win_get_cursor(notes.state.folders_win)[1]
+      return notes.state.folders[row] and notes.state.folders[row].folder == 'C/B'
+    end)()
+  )
+
+  notes.close()
+end
+
+-- ── paste_folder: cannot move a folder into its own descendant ─────────────────
+do
+  io.write('paste_folder blocks moving into own subtree\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'note in B' })
+
+  fresh_open(dir)
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.cut_folder()
+  api.nvim_win_set_cursor(notes.state.folders_win, { 2, 0 }) -- A (only child at root)
+  picker.change_folder() -- drill into A; row 1 = A, row 2 = B
+  api.nvim_win_set_cursor(notes.state.folders_win, { 2, 0 }) -- A/B, a descendant of A
+  picker.paste_note()
+  check('A stays on disk (not moved into its own child)', fn.isdirectory(dir .. '/A') == 1)
+  check('B untouched', fn.isdirectory(dir .. '/A/B') == 1)
+  check('cut_folder still marked (paste refused, not consumed)', notes.state.cut_folder == 'A')
+
+  notes.close()
+end
+
+-- ── paste_folder: destination already has a folder with the same name ──────────
+do
+  io.write('paste_folder blocks name collision at destination\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/note', { 'a note' })
+  writefile(dir .. '/C/A/other', { 'other note' })
+
+  fresh_open(dir)
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.cut_folder()
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'C' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.paste_note()
+  check('source A untouched', fn.isdirectory(dir .. '/A') == 1)
+  check('destination A/A untouched', fn.filereadable(dir .. '/C/A/other') == 1)
+
+  notes.close()
+end
+
+-- ── conflicted folder blocks cut_folder / paste_folder ──────────────────────────
+do
+  io.write('block folder move on conflict\n')
+  local dir = tmpdir()
+  writefile(dir .. '/Work/c1', { 'conflicted note' })
+  fn.mkdir(dir .. '/Dest', 'p')
+  fn.writefile({}, dir .. '/Dest/.gitkeep')
+
+  fresh_open(dir)
+  local cfile
+  for _, n in ipairs(notes.state.notes_all) do
+    if n.folder == 'Work' then
+      cfile = n.file
+    end
+  end
+  notes.state.conflicts = { [cfile] = true }
+  picker.populate()
+
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Work' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.cut_folder()
+  check('cut_folder blocked on conflict', notes.state.cut_folder == nil)
+
+  notes.state.cut_folder = 'Work' -- force a marked conflicted folder
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Dest' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.paste_note()
+  check(
+    'paste_folder blocked on conflict',
+    fn.isdirectory(dir .. '/Work') == 1 and fn.isdirectory(dir .. '/Dest/Work') == 0
+  )
+
+  notes.close()
+end
+
 io.write('\n')
 if failures > 0 then
   io.write(failures .. ' check(s) FAILED\n')
