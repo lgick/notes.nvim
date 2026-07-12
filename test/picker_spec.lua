@@ -1235,6 +1235,62 @@ do
   notes.close()
 end
 
+-- ── cut highlight stays visible when the cut folder is also the selected one ───
+do
+  io.write('cut_folder highlight visible on the selected row\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/note', { 'a note' })
+
+  fresh_open(dir)
+  local a_row
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      a_row = i
+    end
+  end
+  api.nvim_win_set_cursor(notes.state.folders_win, { a_row, 0 })
+  picker.select_folder() -- A becomes current_folder (selected/active row)
+  picker.cut_folder() -- A is now cut AND selected on the same row
+
+  local ns_cut = api.nvim_create_namespace('notes_list')
+  local marks = api.nvim_buf_get_extmarks(
+    notes.state.folders_buf,
+    ns_cut,
+    0,
+    -1,
+    { details = true }
+  )
+  local cut_priority
+  for _, m in ipairs(marks) do
+    if m[2] == a_row - 1 and m[4].hl_group == 'NotesCut' then
+      cut_priority = m[4].priority
+    end
+  end
+  check('NotesCut extmark present on the selected row', cut_priority ~= nil)
+
+  local ns_folders = api.nvim_create_namespace('notes_folders')
+  local dir_marks = api.nvim_buf_get_extmarks(
+    notes.state.folders_buf,
+    ns_folders,
+    0,
+    -1,
+    { details = true }
+  )
+  local dir_priority
+  for _, m in ipairs(dir_marks) do
+    if m[2] == a_row - 1 then
+      dir_priority = m[4].priority
+    end
+  end
+  check(
+    'NotesCut outranks the base NotesDirActive highlight',
+    cut_priority ~= nil and dir_priority ~= nil and cut_priority > dir_priority,
+    'cut=' .. tostring(cut_priority) .. ' dir=' .. tostring(dir_priority)
+  )
+
+  notes.close()
+end
+
 -- ── cut_folder: mark/cancel, true root refused ─────────────────────────────────
 do
   io.write('cut_folder mark/cancel\n')

@@ -290,12 +290,18 @@ function M.render_folders()
   api.nvim_buf_clear_namespace(st.folders_buf, ns, 0, -1)
   for i, f in ipairs(folders) do
     local hl = f.folder == st.current_folder and 'NotesDirActive' or 'NotesDir'
-    api.nvim_buf_set_extmark(st.folders_buf, ns_folders, i - 1, 0, { line_hl_group = hl })
+    -- hl_group (not line_hl_group) with a low priority, same as NotesActive in the
+    -- notes column: line_hl_group is a separate rendering layer that would override
+    -- hl_group (NotesCut, NotesConflict) regardless of priority, hiding them on the
+    -- selected/cut row. hl_group lets priority ordering apply instead.
+    api.nvim_buf_set_extmark(
+      st.folders_buf,
+      ns_folders,
+      i - 1,
+      0,
+      { end_col = #lines[i], hl_group = hl, priority = 0 }
+    )
     if folder_has_conflict(f.folder) then
-      -- hl_group (combine) over the row text, NOT line_hl_group: the folder row
-      -- already has a line_hl_group (NotesDir/Active) at the default extmark
-      -- priority (4096), which would hide a lower-priority line_hl_group. An
-      -- hl_group is a separate layer and combines with it regardless.
       api.nvim_buf_set_extmark(st.folders_buf, ns_conflict, i - 1, 0, {
         end_col = #lines[i],
         hl_group = 'NotesConflict',
@@ -304,12 +310,13 @@ function M.render_folders()
       })
     end
     if f.folder ~= nil and f.folder == st.cut_folder then
+      -- hl_group over the text only (not full width); priority > NotesDir/Active (0)
       api.nvim_buf_set_extmark(
         st.folders_buf,
         ns,
         i - 1,
         0,
-        { end_col = #lines[i], hl_group = 'NotesCut', hl_mode = 'combine', priority = 200 }
+        { end_col = #lines[i], hl_group = 'NotesCut', priority = 200 }
       )
     end
   end

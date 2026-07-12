@@ -197,7 +197,7 @@ Override these to customize colors (they link to sensible defaults):
 
 `NotesDirActive` is computed at open time from the resolved colors of `Directory` (fg) and `CursorLine` (bg), combining the folder color with the selection background. Override it with an explicit `nvim_set_hl` call in your config after setup.
 
-`NotesActive` and `NotesDirActive` both use `line_hl_group` to fill the full line width so they stay visible when focus is elsewhere. `NotesCut` has higher priority (200) than `NotesActive` (0), so it is never hidden by it even when both land on the same row. The folders and notes windows do not use `cursorline`; the terminal cursor shows the current position.
+`NotesActive` and `NotesDirActive` both use a low-priority (0) highlight over the row text, so `NotesCut` (priority 200) and `NotesConflict` (priority 300) are never hidden by them even when both land on the same row — a marked-for-move or conflicted note/folder stays visibly highlighted even while it's also the currently selected one. The folders and notes windows do not use `cursorline`; the terminal cursor shows the current position.
 
 ### Statusline plugins
 
