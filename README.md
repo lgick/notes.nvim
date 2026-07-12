@@ -36,7 +36,7 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 - **Unsaved changes prompt** — pressing `q` when the editor has unsaved changes shows a **Save / Discard / Cancel** dialog instead of silently writing or discarding. Choosing **Discard** reloads the saved version from disk.
 - **Crash-safe** — on every open, tracked files deleted outside the plugin (e.g. an accidental `rm`) are restored from the last commit before anything is pushed, so an empty working tree never propagates to the remote.
 - **Sync status icon** — the Neovim tab label shows a sync status indicator next to `notes.nvim`: an animated braille spinner (`⠋⠙⠹…`) while syncing, `✓` when idle, `!` when there is a merge conflict. Nerd Font glyphs are used automatically for idle/conflict (`nf-fa-check` / `nf-cod-warning`) if `nvim-web-devicons` is installed (required on demand, so load order doesn't matter); otherwise plain ASCII. No icon when `repo = ''`. Icons are fully configurable via `config.sync_icons`.
-- **Toggle panels** — press `f` (configurable) from any window to hide the Folders and Notes columns, giving the editor the full screen; press again to restore them. Useful when writing longer notes.
+- **Toggle panels** — press `<C-t>` (configurable) from any window to hide the Folders and Notes columns, giving the editor the full screen; press again to restore them. Useful when writing longer notes.
 - **No external dependencies** — pure Lua, no third-party plugins required.
 - **Works from any directory** — open your notes regardless of the current working directory.
 
@@ -116,7 +116,7 @@ require('notes').setup({
     scroll_up   = '<C-p>', -- notes: scroll the open note up
     close         = 'q',     -- close notes (works from any notes window)
     window_nav    = '<C-w>', -- prefix; then h/j/k/l → move between windows
-    toggle_panels = 'f',     -- hide/show Folders + Notes columns
+    toggle_panels = '<C-t>', -- hide/show Folders + Notes columns
   },
 
   -- Sync status icons shown in the tab label next to 'notes.nvim'.
@@ -161,7 +161,7 @@ All keys are configurable via `config.keys` (see above).
 | `<C-n>` / `<C-p>` | Scroll the open note down / up | notes |
 | `R` | Refresh the list | folders / notes |
 | `O` | Open the notes repository in the browser | folders / notes |
-| `f` | Toggle Folders + Notes columns (hide / show) | any |
+| `<C-t>` | Toggle Folders + Notes columns (hide / show) | any |
 | `<C-w>` then `h`/`j`/`k`/`l` | Move between windows | any |
 | `q` | Close notes (prompts if editor has unsaved changes) | any |
 
