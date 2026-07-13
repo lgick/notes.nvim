@@ -14,6 +14,7 @@ local ns_title = api.nvim_create_namespace('notes_title')
 local ns_conflict = api.nvim_create_namespace('notes_conflict')
 
 local EMPTY_TITLE = 'New Note'
+local ROOT_LABEL = 'Notes' -- virtual root row; its relative path is '' everywhere
 
 -- Relative paths of every real folder at any depth from the last scan() ("Work",
 -- "Work/Projects"). Module-local: build_tree() derives the tree from it; not
@@ -232,11 +233,25 @@ end
 
 -- Builds the flat tree (state.tree_items) by recursively walking from the root
 -- ('' ), descending into a folder only when it is in state.expanded_folders.
--- Folders are listed before notes at each level.
+-- Folders are listed before notes at each level. The root itself is always
+-- item[1] ("Notes/", depth 0); its own expand state lives in state.root_expanded
+-- (a dedicated boolean, not a member of expanded_folders — '' is never a real
+-- path in all_folders, so prune_expanded() would otherwise strip it every scan,
+-- and a "default to true when absent" check on a *set* would re-expand it on
+-- every populate() the instant the user collapsed it, since collapsing removes
+-- the key rather than setting it false).
 function M.build_tree()
   local st = state()
   st.expanded_folders = st.expanded_folders or {}
   local items = {}
+
+  items[1] = {
+    type = 'folder',
+    path = '',
+    name = ROOT_LABEL,
+    depth = 0,
+    expanded = st.root_expanded,
+  }
 
   local function build_level(folder_rel, depth)
     for _, f in ipairs(direct_children(folder_rel)) do
@@ -265,7 +280,9 @@ function M.build_tree()
     end
   end
 
-  build_level('', 0)
+  if st.root_expanded then
+    build_level('', 1)
+  end
   st.tree_items = items
 end
 
@@ -359,12 +376,15 @@ function M.highlight_active()
     for i, it in ipairs(st.tree_items or {}) do
       if it.type == 'note' and it.file == st.current_file then
         local line = api.nvim_buf_get_lines(st.explorer_buf, i - 1, i, false)[1] or ''
+        -- hl_eol extends the background past end_col to the window's right edge,
+        -- so the open note's row is fully highlighted even though `cursorline`
+        -- (native, follows the cursor) may be on a different row entirely.
         api.nvim_buf_set_extmark(
           st.explorer_buf,
           ns_active,
           i - 1,
           0,
-          { end_col = #line, hl_group = 'NotesActive', priority = 0 }
+          { end_col = #line, hl_group = 'NotesActive', hl_eol = true, priority = 0 }
         )
         break
       end
@@ -404,18 +424,8 @@ function M.render_tree()
     end
   end
 
-  local empty = #lines == 0
-  if empty then
-    lines = { '(no notes)' }
-  else
-    -- Trailing blank row: an explicit "root" drop zone. Every folder/note row
-    -- resolves context_folder() to itself or its own folder, so without this the
-    -- root ('') could only be targeted when a root-level note happens to exist
-    -- under the cursor — this blank line (item_at_cursor() finds nothing there)
-    -- is always available for creating/pasting back at the top level.
-    lines[#lines + 1] = ''
-  end
-
+  -- tree_items always has the root row ("Notes/") as item 1, so lines is never
+  -- empty and there's no "(no notes)" case to special-case anymore.
   vim.bo[st.explorer_buf].modifiable = true
   api.nvim_buf_set_lines(st.explorer_buf, 0, -1, false, lines)
   vim.bo[st.explorer_buf].modifiable = false
@@ -425,58 +435,56 @@ function M.render_tree()
   api.nvim_buf_clear_namespace(st.explorer_buf, ns_conflict, 0, -1)
   api.nvim_buf_clear_namespace(st.explorer_buf, ns, 0, -1)
 
-  if not empty then
-    for i, it in ipairs(st.tree_items) do
-      local line = lines[i]
-      if it.type == 'folder' then
+  for i, it in ipairs(st.tree_items) do
+    local line = lines[i]
+    if it.type == 'folder' then
+      api.nvim_buf_set_extmark(
+        st.explorer_buf,
+        ns_folders,
+        i - 1,
+        0,
+        { end_col = #line, hl_group = 'NotesDir', priority = 0 }
+      )
+      if folder_has_conflict(it.path) then
+        api.nvim_buf_set_extmark(st.explorer_buf, ns_conflict, i - 1, 0, {
+          end_col = #line,
+          hl_group = 'NotesConflict',
+          hl_mode = 'combine',
+          priority = 300,
+        })
+      end
+      if it.path == st.cut_folder then
         api.nvim_buf_set_extmark(
           st.explorer_buf,
-          ns_folders,
+          ns,
           i - 1,
           0,
-          { end_col = #line, hl_group = 'NotesDir', priority = 0 }
+          { end_col = #line, hl_group = 'NotesCut', priority = 200 }
         )
-        if folder_has_conflict(it.path) then
-          api.nvim_buf_set_extmark(st.explorer_buf, ns_conflict, i - 1, 0, {
-            end_col = #line,
-            hl_group = 'NotesConflict',
-            hl_mode = 'combine',
-            priority = 300,
-          })
-        end
-        if it.path == st.cut_folder then
-          api.nvim_buf_set_extmark(
-            st.explorer_buf,
-            ns,
-            i - 1,
-            0,
-            { end_col = #line, hl_group = 'NotesCut', priority = 200 }
-          )
-        end
-      else
-        api.nvim_buf_set_extmark(st.explorer_buf, ns_title, i - 1, title_col[i], {
+      end
+    else
+      api.nvim_buf_set_extmark(st.explorer_buf, ns_title, i - 1, title_col[i], {
+        end_col = #line,
+        hl_group = 'NotesTitle',
+        hl_mode = 'combine',
+        priority = 100,
+      })
+      if is_conflicted(it.file) then
+        api.nvim_buf_set_extmark(st.explorer_buf, ns_conflict, i - 1, 0, {
           end_col = #line,
-          hl_group = 'NotesTitle',
+          hl_group = 'NotesConflict',
           hl_mode = 'combine',
-          priority = 100,
+          priority = 300,
         })
-        if is_conflicted(it.file) then
-          api.nvim_buf_set_extmark(st.explorer_buf, ns_conflict, i - 1, 0, {
-            end_col = #line,
-            hl_group = 'NotesConflict',
-            hl_mode = 'combine',
-            priority = 300,
-          })
-        end
-        if it.file == st.cut then
-          api.nvim_buf_set_extmark(
-            st.explorer_buf,
-            ns,
-            i - 1,
-            0,
-            { end_col = #line, hl_group = 'NotesCut', priority = 200 }
-          )
-        end
+      end
+      if it.file == st.cut then
+        api.nvim_buf_set_extmark(
+          st.explorer_buf,
+          ns,
+          i - 1,
+          0,
+          { end_col = #line, hl_group = 'NotesCut', priority = 200 }
+        )
       end
     end
   end
@@ -532,11 +540,15 @@ function M.toggle_expand()
   end
   if it.type == 'folder' then
     local st = state()
-    st.expanded_folders = st.expanded_folders or {}
-    if st.expanded_folders[it.path] then
-      st.expanded_folders[it.path] = nil
+    if it.path == '' then
+      st.root_expanded = not st.root_expanded
     else
-      st.expanded_folders[it.path] = true
+      st.expanded_folders = st.expanded_folders or {}
+      if st.expanded_folders[it.path] then
+        st.expanded_folders[it.path] = nil
+      else
+        st.expanded_folders[it.path] = true
+      end
     end
     local key = folder_key(it.path)
     M.build_tree()
@@ -650,7 +662,7 @@ end
 
 function M.delete_folder()
   local it = item_at_cursor()
-  if not (it and it.type == 'folder') then
+  if not (it and it.type == 'folder' and it.path ~= '') then
     vim.notify('[notes.nvim] Select a folder to delete', vim.log.levels.WARN)
     return
   end
@@ -712,7 +724,7 @@ end
 -- folder's parent path stays put.
 function M.rename_folder()
   local it = item_at_cursor()
-  if not (it and it.type == 'folder') then
+  if not (it and it.type == 'folder' and it.path ~= '') then
     vim.notify('[notes.nvim] Select a folder to rename', vim.log.levels.WARN)
     return
   end
@@ -828,6 +840,10 @@ function M.cut()
         or ('[notes.nvim] Navigate to a folder and press ' .. cfg().keys.paste)
     )
   else
+    if it.path == '' then
+      vim.notify('[notes.nvim] Cannot move the root folder', vim.log.levels.WARN)
+      return
+    end
     if folder_has_conflict(it.path) then
       notify_conflict_block()
       return

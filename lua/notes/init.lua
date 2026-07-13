@@ -43,6 +43,10 @@ M.state = {
   current_file = nil, -- path of the file currently open in the editor
   cut = nil, -- path of the note marked for moving (set by `x`)
   cut_folder = nil, -- relative path of the folder marked for moving (set by `x`)
+  root_expanded = true, -- whether the virtual root row ("Notes/") is expanded; a
+                         -- dedicated boolean (not a member of expanded_folders,
+                         -- which is pruned against real folders on disk and where
+                         -- '' would never be a valid member)
   expanded_folders = nil, -- set { [rel folder path] = true } of expanded folders; nil = none
   notes_all = nil, -- full scan: array of { file, folder, title, mtime, empty }
   tree_items = nil, -- flat tree rows; buffer line n → tree_items[n]
@@ -65,6 +69,7 @@ function M.is_open()
     st.current_file = nil
     st.cut = nil
     st.cut_folder = nil
+    st.root_expanded = true
     st.expanded_folders = nil
     st.notes_all = nil
     st.tree_items = nil

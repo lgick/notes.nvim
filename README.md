@@ -10,11 +10,12 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 ```
 ────────────────────────────────────────────────
  Explorer                          ← statusline
-  ▼ Work/
-    ▶ Projects/
-    10.07.2026 - Report
-  ▶ Personal/
-  26.06.2026 - Shopping list
+ ▼ Notes/
+   ▼ Work/
+     ▶ Projects/
+     10.07.2026 - Report
+   ▶ Personal/
+   26.06.2026 - Shopping list
 ────────────────────────────────────────────────
  Notes/Shopping list                ← statusline (folder/title)
  # Shopping list
@@ -23,16 +24,18 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
  - [ ] Call the bank
 ```
 
-Folders nest to any depth and expand/collapse in place (`o` or `<CR>`):
+Folders nest to any depth and expand/collapse in place (`o` or `<CR>`), including the
+root `Notes/` row itself:
 
 ```
 ────────────────────────────────────────────────
  Explorer
-  ▼ Work/
-    ▼ Projects/
-      ▶ Q3/
-      26.06.2026 - Sprint notes
-    ▶ Archive/
+ ▼ Notes/
+   ▼ Work/
+     ▼ Projects/
+       ▶ Q3/
+       26.06.2026 - Sprint notes
+     ▶ Archive/
 ────────────────────────────────────────────────
 ```
 
@@ -40,8 +43,9 @@ Folders nest to any depth and expand/collapse in place (`o` or `<CR>`):
 
 - **Filetree explorer + editor** — opens in a new full-screen tab: a single **explorer** tree (folders and notes together, any depth) on top, the editor on the bottom. Closing notes closes the tab.
 - **Title from content** — a note has no manual filename. Its title is the **first non-blank line** of its text; an empty note is titled **"New Note"** and is always pinned to the top of its folder. On disk each note is an opaque ID file (`.md` extension, e.g. `20260627143000.md`), so editing a title never churns git history or collides. Note rows show `dd.mm.yyyy - Title`, sorted by modification time (newest first) within each folder. **The title updates live as you type**, without saving.
-- **Nested folders, expand in place** — folders nest to any depth and start collapsed. Press `o` (or `<CR>`) on a folder to expand/collapse it right there in the tree, indented two spaces per level; press it on a note to focus the editor. Siblings are sorted so the folder/note whose subtree has the most recently edited note comes first, folders before notes at the same level. Folder rows show a closed/open glyph (configurable, see `config.tree_icons`); notes have no icon by default. New notes (`a`) and folders (`A`) are created inside the folder under the cursor (or the folder of the note under the cursor); a trailing blank row at the bottom of the tree targets the root explicitly. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
-- **Move by cursor** — press `x` on a note or a folder to mark it (highlighted with the selection color); press `x` again on the same item to cancel. Navigate anywhere in the tree (expanding/collapsing as needed) to the destination folder and press `p` to drop the marked note/folder there (or onto the trailing blank row to drop it at the root). The destination folder auto-expands so the moved item is visible, and the cursor lands on it. A folder can't be moved into itself or one of its own subfolders.
+- **Root row, nested folders, expand in place** — the tree always starts with a `Notes/` row (the repo root); real folders nest under it to any depth and start collapsed. Press `o` (or `<CR>`) on any folder — including `Notes/` itself — to expand/collapse it right there in the tree, indented two spaces per level; press it on a note to focus the editor. Siblings are sorted so the folder/note whose subtree has the most recently edited note comes first, folders before notes at the same level. Folder rows show a closed/open glyph (configurable, see `config.tree_icons`); notes have no icon by default. New notes (`a`) and folders (`A`) are created inside the folder under the cursor (or the folder of the note under the cursor); dropping onto the `Notes/` row itself targets the root explicitly. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
+- **Move by cursor** — press `x` on a note or a folder to mark it (highlighted with the selection color); press `x` again on the same item to cancel. Navigate anywhere in the tree (expanding/collapsing as needed) to the destination folder and press `p` to drop the marked note/folder there (or onto the `Notes/` row to drop it at the root). The destination folder auto-expands so the moved item is visible, and the cursor lands on it. A folder can't be moved into itself, one of its own subfolders, or moved at all if it's the root `Notes/` row.
+- **Full-width row highlight, no distracting block cursor** — the explorer window highlights the whole width of the row under the cursor (native `cursorline`); the terminal block cursor itself is hidden while the explorer is focused, so it never sits on top of a tree glyph. The currently *open* note keeps its own full-width highlight independently of where the cursor is.
 - **Native editing** — the editor window behaves like a normal `markdown` file window (`number`, `cursorline`, `signcolumn`), so global `InsertEnter`/`InsertLeave` styling and statusline plugins work inside it.
 - **Instant UI updates** — the tree updates immediately on `:w` (sort order, title); git sync runs in the background.
 - **Full management** — `a` creates a note, `A` creates a folder (both inside the folder under the cursor), `d` deletes the note/folder under the cursor, `x` marks it for moving, `p` pastes; folders also support rename (`r`); refresh (`R`). **Every create/delete/move/rename immediately commits and pushes to GitHub.**
@@ -170,13 +174,13 @@ cursor (the "context folder") for create/paste.
 | Key | Action |
 |-----|--------|
 | `j` / `k` | Move cursor; landing on a note opens it instantly below |
-| `o` / `<CR>` | Folder: expand/collapse in place · Note: focus the editor |
+| `o` / `<CR>` | Folder (incl. `Notes/`): expand/collapse in place · Note: focus the editor |
 | `a` | Create a note in the context folder |
 | `A` | Create a folder in the context folder |
-| `d` | Delete the note/folder under the cursor (confirmation) |
-| `r` | Rename the folder under the cursor |
-| `x` | Mark the note/folder under the cursor for moving |
-| `p` | Drop the marked note/folder into the context folder (or the root, from the blank row at the end of the tree) |
+| `d` | Delete the note/folder under the cursor (confirmation; not `Notes/`) |
+| `r` | Rename the folder under the cursor (not `Notes/`) |
+| `x` | Mark the note/folder under the cursor for moving (not `Notes/`) |
+| `p` | Drop the marked note/folder into the context folder (drop onto `Notes/` for the root) |
 | `<C-n>` / `<C-p>` | Scroll the open note down / up |
 | `R` | Refresh the tree |
 | `O` | Open the notes repository in the browser |
@@ -199,7 +203,7 @@ Override these to customize colors (they link to sensible defaults):
 | `NotesCut` | `Visual` | the note or folder marked for moving (`x`) |
 | `NotesConflict` | undercurl, `sp` from `DiagnosticError` | wavy error underline on a note in a merge conflict, and on its folder |
 
-`NotesActive` uses a low-priority (0) highlight over the row text, so `NotesCut` (priority 200) and `NotesConflict` (priority 300) are never hidden by it even when both land on the same row — a marked-for-move or conflicted note/folder stays visibly highlighted even while it's also the currently open one. The explorer window does not use `cursorline`; the terminal cursor shows the current position.
+`NotesActive` uses a low-priority (0), full-width (`hl_eol`) highlight over the row, so `NotesCut` (priority 200) and `NotesConflict` (priority 300) are never hidden by it even when both land on the same row — a marked-for-move or conflicted note/folder stays visibly highlighted even while it's also the currently open one. The explorer window has native `cursorline` enabled (also full width) for the row under the cursor; the terminal block cursor itself is hidden while the explorer is focused, so `cursorline` — not the cursor glyph — is what shows your position. (Cursor hiding relies on your terminal/GUI rendering Neovim's cursor color; most modern terminals do, some plain ones will just show their own default cursor instead.)
 
 ### Statusline plugins
 
@@ -221,7 +225,7 @@ The notes tab is labelled `notes.nvim` plus a sync status indicator (e.g. `notes
     .gitkeep
 ```
 
-Each note is an ID-named `.md` file; its title in the tree is read from the first non-blank line of its content. Notes with no folder sit at the root of the tree. Folders can nest to any depth and expand/collapse in place with `o`. Create a note with `a`, a folder with `A` (both inside the context folder); rename a folder with `r`, delete with `d`; move a note or a whole folder (with its contents) between folders with `x` (mark) then `p` (paste into the context folder) — a folder can't be moved into itself or one of its own subfolders.
+Each note is an ID-named `.md` file; its title in the tree is read from the first non-blank line of its content. Notes with no folder sit directly under the `Notes/` root row. Folders can nest to any depth and expand/collapse in place with `o`, same as `Notes/` itself. Create a note with `a`, a folder with `A` (both inside the context folder); rename a folder with `r`, delete with `d`; move a note or a whole folder (with its contents) between folders with `x` (mark) then `p` (paste into the context folder, or onto `Notes/` for the root) — a folder can't be moved into itself, one of its own subfolders, or (being the root) moved at all.
 
 ### Git sync behaviour
 

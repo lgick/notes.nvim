@@ -46,10 +46,11 @@ local function tree_items()
   return notes.state.tree_items or {}
 end
 
+-- Real folder names only (excludes the virtual root "Notes/" row, always item 1).
 local function folder_names()
   local out = {}
   for _, it in ipairs(tree_items()) do
-    if it.type == 'folder' then
+    if it.type == 'folder' and it.path ~= '' then
       out[#out + 1] = it.name
     end
   end
@@ -226,8 +227,13 @@ do
   fn.writefile({}, dir .. '/aaa_folder/.gitkeep')
 
   fresh_open(dir)
-  local first = notes.state.tree_items[1]
-  check('first root row is the folder, not the note', first and first.type == 'folder', first and first.type)
+  local root, second = notes.state.tree_items[1], notes.state.tree_items[2]
+  check('item 1 is the virtual root row', root and root.path == '', root and root.path)
+  check(
+    'first real row (under root) is the folder, not the note',
+    second and second.type == 'folder',
+    second and second.type
+  )
 
   notes.close()
 end
@@ -239,8 +245,9 @@ do
   writefile(dir .. '/n', { 'hello' })
 
   fresh_open(dir)
-  local row = api.nvim_buf_get_lines(notes.state.explorer_buf, 0, 1, false)[1]
-  check('row uses " - " separator', row:match('^%d%d%.%d%d%.%d%d%d%d %- hello$') ~= nil, row)
+  local nrow = note_row(notes.state.notes_all[1].file)
+  local row = api.nvim_buf_get_lines(notes.state.explorer_buf, nrow - 1, nrow, false)[1]
+  check('row uses " - " separator', row:match('^%s*%d%d%.%d%d%.%d%d%d%d %- hello$') ~= nil, row)
 
   notes.close()
 end
@@ -255,8 +262,9 @@ do
   local ns_title = api.nvim_create_namespace('notes_title')
   local marks = api.nvim_buf_get_extmarks(notes.state.explorer_buf, ns_title, 0, -1, { details = true })
   check('one title mark rendered', #marks == 1, 'count=' .. #marks)
-  -- root note, no icon: prefix "dd.mm.yyyy - " is 13 bytes
-  check('title mark starts after date prefix', marks[1] and marks[1][3] == 13, marks[1] and marks[1][3])
+  -- note sits at depth 1 (under the always-visible root), no icon: 2-space indent
+  -- + "dd.mm.yyyy - " (13 bytes) = 15
+  check('title mark starts after indent + date prefix', marks[1] and marks[1][3] == 15, marks[1] and marks[1][3])
   check('title mark uses NotesTitle', marks[1] and marks[1][4].hl_group == 'NotesTitle')
 
   notes.close()
@@ -275,8 +283,9 @@ do
   local a_row, b_row = folder_row('A'), folder_row('A/B')
   local a_line = api.nvim_buf_get_lines(notes.state.explorer_buf, a_row - 1, a_row, false)[1]
   local b_line = api.nvim_buf_get_lines(notes.state.explorer_buf, b_row - 1, b_row, false)[1]
-  check('A at depth 0 has no leading spaces', a_line:sub(1, 1) ~= ' ', a_line)
-  check('A/B at depth 1 has a 2-space indent', b_line:sub(1, 2) == '  ' and b_line:sub(3, 3) ~= ' ', b_line)
+  -- A is a direct child of the always-visible root, so it sits at depth 1
+  check('A at depth 1 has a 2-space indent', a_line:sub(1, 2) == '  ' and a_line:sub(3, 3) ~= ' ', a_line)
+  check('A/B at depth 2 has a 4-space indent', b_line:sub(1, 4) == '    ' and b_line:sub(5, 5) ~= ' ', b_line)
 
   local note_file
   for _, n in ipairs(notes.state.notes_all) do
@@ -286,7 +295,7 @@ do
   end
   local n_row = note_row(note_file)
   local n_line = api.nvim_buf_get_lines(notes.state.explorer_buf, n_row - 1, n_row, false)[1]
-  check('note at depth 2 has a 4-space indent', n_line:sub(1, 4) == '    ' and n_line:sub(5, 5) ~= ' ', n_line)
+  check('note at depth 3 has a 6-space indent', n_line:sub(1, 6) == '      ' and n_line:sub(7, 7) ~= ' ', n_line)
 
   notes.close()
 end
@@ -299,9 +308,9 @@ do
 
   fresh_open(dir)
   check(
-    'root shows only A (B and the note are hidden)',
-    #tree_items() == 1 and tree_items()[1].path == 'A',
-    tree_items()[1] and tree_items()[1].path
+    'root + A only (B and the note are hidden)',
+    #tree_items() == 2 and tree_items()[1].path == '' and tree_items()[2].path == 'A',
+    tree_items()[2] and tree_items()[2].path
   )
 
   goto_folder('A')
@@ -318,7 +327,18 @@ do
   goto_folder('A')
   picker.toggle_expand()
   check('A collapsed', notes.state.expanded_folders['A'] == nil)
-  check('root shows only A again', #tree_items() == 1)
+  check('root + A only again', #tree_items() == 2)
+
+  -- collapsing the root itself hides everything under it
+  goto_folder('')
+  picker.toggle_expand()
+  check('root collapsed', notes.state.root_expanded == false)
+  check('only the root row remains', #tree_items() == 1 and tree_items()[1].path == '')
+
+  goto_folder('')
+  picker.toggle_expand()
+  check('root re-expanded', notes.state.root_expanded == true)
+  check('A visible again', folder_row('A') ~= nil)
 
   notes.close()
 end
@@ -468,7 +488,8 @@ do
   local row = folder_row('A')
   picker.render_tree()
   local line = api.nvim_buf_get_lines(notes.state.explorer_buf, row - 1, row, false)[1]
-  check('rendered folder row uses the custom closed-folder icon', line:sub(1, 1) == 'C', line)
+  -- A is a direct child of root (depth 1): 2-space indent precedes the glyph
+  check('rendered folder row uses the custom closed-folder icon', line:sub(3, 3) == 'C', line)
 
   notes.config.tree_icons = nil
   notes.close()
@@ -903,7 +924,7 @@ do
   notes.close()
 end
 
--- ── move note to root via the trailing "root drop zone" row ───────────────────
+-- ── move note to root by dropping it on the "Notes/" row ──────────────────────
 do
   io.write('move note to root\n')
   local dir = tmpdir()
@@ -921,10 +942,8 @@ do
   picker.cut()
   check('cut set', notes.state.cut ~= nil)
 
-  -- cursor past the last tree row = root drop zone (context_folder() == '')
-  local last = #notes.state.tree_items + 1
-  api.nvim_win_set_cursor(notes.state.explorer_win, { last, 0 })
-  check('drop-zone row resolves to root', picker.context_folder() == '')
+  goto_folder('') -- the "Notes/" row itself resolves context_folder() to root
+  check('root row resolves to root', picker.context_folder() == '')
   picker.paste()
 
   check('note moved to root dir', fn.filereadable(dir .. '/n1') == 1, dir .. '/n1')
@@ -1009,8 +1028,8 @@ do
   )
   check('editor buffer is scratch (no E211 backing file)', vim.bo[notes.state.edit_buf].buftype == 'nofile')
   check(
-    'explorer shows empty marker',
-    api.nvim_buf_get_lines(notes.state.explorer_buf, 0, -1, false)[1] == '(no notes)'
+    'explorer shows only the root row (no notes left anywhere)',
+    #notes.state.tree_items == 1 and notes.state.tree_items[1].path == ''
   )
 
   notes.close()
@@ -1566,9 +1585,8 @@ do
   check('st.cut rewritten to the new path', notes.state.cut == expected, notes.state.cut)
   check('the rewritten path exists on disk', fn.filereadable(notes.state.cut) == 1)
 
-  -- paste to root via the drop zone confirms the rewritten path is still valid
-  local last = #notes.state.tree_items + 1
-  api.nvim_win_set_cursor(notes.state.explorer_win, { last, 0 })
+  -- paste to root (drop on the "Notes/" row) confirms the rewritten path is valid
+  goto_folder('')
   picker.paste()
   check('paste after rename succeeds', fn.filereadable(dir .. '/note') == 1)
 
@@ -1633,8 +1651,7 @@ do
   check('st.cut cleared after ancestor deleted', notes.state.cut == nil)
 
   -- paste must be a safe no-op (nothing marked), not an error
-  local last = #notes.state.tree_items + 1
-  api.nvim_win_set_cursor(notes.state.explorer_win, { last, 0 })
+  goto_folder('')
   picker.paste()
   check('paste after stale cut is a safe no-op', fn.filereadable(dir .. '/root note') == 1)
 
@@ -1690,6 +1707,87 @@ do
   )
 
   notes.close()
+end
+
+-- ── the virtual root row cannot be renamed, deleted, or marked for moving ─────
+do
+  io.write('root row is protected\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/note', { 'a note' })
+
+  fresh_open(dir)
+  goto_folder('')
+
+  local orig_input = vim.ui.input
+  vim.ui.input = function(_, cb) cb('Renamed') end
+  picker.rename_folder()
+  vim.ui.input = orig_input
+  check('root rename refused (no "Renamed" dir created anywhere)', fn.isdirectory(dir .. '/Renamed') == 0)
+
+  local orig_confirm = vim.fn.confirm
+  vim.fn.confirm = function() return 1 end
+  picker.delete_folder()
+  vim.fn.confirm = orig_confirm
+  check('root delete refused (dir still exists)', fn.isdirectory(dir) == 1)
+  check('A untouched', fn.isdirectory(dir .. '/A') == 1)
+
+  picker.cut()
+  check('root cannot be marked for moving', notes.state.cut_folder == nil)
+
+  notes.close()
+end
+
+-- ── full-width active-row highlight: cursorline + NotesActive hl_eol ──────────
+do
+  io.write('full-width highlight\n')
+  local dir = tmpdir()
+  writefile(dir .. '/n1', { 'note one' })
+
+  fresh_open(dir)
+  check('explorer window has cursorline enabled', vim.wo[notes.state.explorer_win].cursorline == true)
+
+  local file = notes.state.notes_all[1].file
+  goto_note(file)
+  picker.open_selected()
+
+  local row = note_row(file)
+  local ns_active = api.nvim_create_namespace('notes_active')
+  local marks = marks_on_row(notes.state.explorer_buf, ns_active, row)
+  check(
+    'NotesActive extmark extends to end of line (hl_eol)',
+    marks[1] and marks[1][4].hl_eol == true,
+    marks[1] and vim.inspect(marks[1][4])
+  )
+
+  notes.close()
+end
+
+-- ── the explorer's block cursor is hidden while focused, restored on leave ────
+do
+  io.write('cursor hiding via guicursor\n')
+  local dir = tmpdir()
+  writefile(dir .. '/n1', { 'note one' })
+
+  local original = vim.o.guicursor -- captured before opening: fresh_open hides it immediately
+  fresh_open(dir)
+  check(
+    'guicursor is patched while the explorer is focused',
+    vim.o.guicursor:find('NotesHiddenCursor', 1, true) ~= nil,
+    vim.o.guicursor
+  )
+
+  api.nvim_set_current_win(notes.state.edit_win)
+  check('guicursor restored after leaving the explorer', vim.o.guicursor == original, vim.o.guicursor)
+
+  api.nvim_set_current_win(notes.state.explorer_win)
+  check(
+    'guicursor patched again on re-entering the explorer',
+    vim.o.guicursor:find('NotesHiddenCursor', 1, true) ~= nil,
+    vim.o.guicursor
+  )
+
+  notes.close()
+  check('guicursor restored after close()', vim.o.guicursor == original, vim.o.guicursor)
 end
 
 io.write('\n')

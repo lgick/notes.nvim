@@ -8,6 +8,10 @@ local fn = vim.fn
 -- saved value of `tabline` before we override it; nil means we didn't override
 local _old_tabline = nil
 
+-- saved value of `guicursor` while the explorer buffer is focused; nil means the
+-- cursor isn't currently hidden. See setup_panel_autocmds' BufEnter/BufLeave.
+local _old_guicursor = nil
+
 -- Sync status icons shown in the tab title when a remote repo is configured.
 -- Nerd Font glyphs are used when nvim-web-devicons is already loaded in the session
 -- (a reliable proxy for Nerd Fonts being present), otherwise plain Unicode fallback.
@@ -155,6 +159,11 @@ local function setup_highlights()
     sp = err and err.fg or nil,
     cterm = { undercurl = true },
   })
+  -- fully transparent (blend=100): referenced by guicursor while the explorer is
+  -- focused so the block cursor doesn't sit on top of the tree glyphs (▶/▼).
+  -- Only takes visible effect in terminals/GUIs that render Nvim's cursor color
+  -- (kitty, wezterm, alacritty, Neovide, …); others just show their own cursor.
+  api.nvim_set_hl(0, 'NotesHiddenCursor', { default = true, blend = 100 })
 end
 
 -- Replace the editor with the placeholder scratch buffer (no file open).
@@ -251,8 +260,9 @@ function M.set_nav_keymaps(buf)
   end, { buffer = buf, silent = true, desc = 'Notes: window nav' })
 end
 
--- CursorMoved handler for the explorer buffer. Kept in a separate augroup so it
--- can be re-registered after toggle_panels recreates the buffer.
+-- CursorMoved/BufEnter/BufLeave handlers for the explorer buffer. Kept in a
+-- separate augroup so they can be re-registered after toggle_panels recreates
+-- the buffer.
 local function setup_panel_autocmds(st)
   local group = api.nvim_create_augroup('NotesPanels', { clear = true })
 
@@ -264,6 +274,32 @@ local function setup_panel_autocmds(st)
         return
       end
       require('notes.picker').open_selected()
+    end,
+  })
+
+  -- guicursor is a global option (Neovim has no per-window cursor-visibility
+  -- knob), so hide/restore on buffer focus rather than window focus; the guard
+  -- on _old_guicursor prevents a stray double BufEnter from saving an
+  -- already-hidden value as the "original" one.
+  api.nvim_create_autocmd('BufEnter', {
+    group = group,
+    buffer = st.explorer_buf,
+    callback = function()
+      if _old_guicursor then
+        return
+      end
+      _old_guicursor = vim.o.guicursor
+      vim.o.guicursor = vim.o.guicursor .. ',a:block-NotesHiddenCursor'
+    end,
+  })
+  api.nvim_create_autocmd('BufLeave', {
+    group = group,
+    buffer = st.explorer_buf,
+    callback = function()
+      if _old_guicursor then
+        vim.o.guicursor = _old_guicursor
+        _old_guicursor = nil
+      end
     end,
   })
 end
@@ -313,7 +349,10 @@ end
 local function list_win_opts(win)
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false
-  vim.wo[win].cursorline = false
+  -- full-width row highlight under the cursor; the block cursor itself is hidden
+  -- (see setup_panel_autocmds' BufEnter/BufLeave) so this is the only "where am I"
+  -- indicator, distinct from NotesActive which persistently marks the open note
+  vim.wo[win].cursorline = true
   vim.wo[win].signcolumn = 'no'
   vim.wo[win].statuscolumn = ''
   vim.wo[win].winfixheight = true
@@ -350,6 +389,13 @@ function M.open()
   vim.bo[st.explorer_buf].swapfile = false
   vim.bo[st.explorer_buf].filetype = 'NotesExplorer'
   vim.bo[st.explorer_buf].modifiable = false
+
+  -- register the BufEnter/BufLeave (guicursor hide) + CursorMoved handlers BEFORE
+  -- opening the window below with enter=true: entering happens as part of window
+  -- creation itself, so BufEnter would silently not fire if the autocmd were
+  -- registered afterwards (nothing was listening yet at the moment it fired)
+  setup_panel_autocmds(st)
+
   st.explorer_win = api.nvim_open_win(st.explorer_buf, true, {
     split = 'above',
     win = base_win,
@@ -518,6 +564,13 @@ function M.close()
 
   st.closing = true
 
+  -- restore guicursor if the tab is closed directly out of the explorer (its own
+  -- BufLeave wouldn't otherwise fire before the buffer is wiped by tabclose)
+  if _old_guicursor then
+    vim.o.guicursor = _old_guicursor
+    _old_guicursor = nil
+  end
+
   local tab = st.tab
   st.tab = nil
   st.explorer_win = nil
@@ -527,6 +580,7 @@ function M.close()
   st.current_file = nil
   st.cut = nil
   st.cut_folder = nil
+  st.root_expanded = true
   st.expanded_folders = nil
   st.tree_items = nil
   st.notes_all = nil
