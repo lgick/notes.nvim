@@ -289,17 +289,16 @@ function M.render_folders()
   api.nvim_buf_clear_namespace(st.folders_buf, ns_conflict, 0, -1)
   api.nvim_buf_clear_namespace(st.folders_buf, ns, 0, -1)
   for i, f in ipairs(folders) do
-    local hl = f.folder == st.current_folder and 'NotesDirActive' or 'NotesDir'
-    -- hl_group (not line_hl_group) with a low priority, same as NotesActive in the
-    -- notes column: line_hl_group is a separate rendering layer that would override
-    -- hl_group (NotesCut, NotesConflict) regardless of priority, hiding them on the
-    -- selected/cut row. hl_group lets priority ordering apply instead.
+    -- hl_group (not line_hl_group) with a low priority: line_hl_group is a separate
+    -- rendering layer that would override hl_group (NotesCut, NotesConflict)
+    -- regardless of priority, hiding them on the selected/cut row. hl_group lets
+    -- priority ordering apply instead.
     api.nvim_buf_set_extmark(
       st.folders_buf,
       ns_folders,
       i - 1,
       0,
-      { end_col = #lines[i], hl_group = hl, priority = 0 }
+      { end_col = #lines[i], hl_group = 'NotesDir', priority = 0 }
     )
     if folder_has_conflict(f.folder) then
       api.nvim_buf_set_extmark(st.folders_buf, ns_conflict, i - 1, 0, {
@@ -482,18 +481,6 @@ function M.open_selected()
     require('notes.ui').open_in_edit(it.file)
     M.highlight_active()
   end
-end
-
--- Folder column cursor moved → switch the notes column to that folder.
-function M.select_folder()
-  local f = selected_folder()
-  if not f then
-    return
-  end
-  state().current_folder = f.folder
-  M.filter()
-  M.render_folders()
-  M.render_notes()
 end
 
 -- `o` in the folders column: drill-down navigation. On the main row (row 1), go up
@@ -995,18 +982,14 @@ function M.paste_note()
     end
   end
 
-  -- выбрать папку-приёмник: её заметки заполняют колонку Notes, сама папка
-  -- подсвечивается активной, а с обновлённым mtime стоит первой среди реальных папок
+  -- проваливаемся (drill-down) в папку-приёмник: её заметки заполняют колонку
+  -- Notes, а с обновлённым mtime она стоит первой среди своих соседей
+  st.main_folder = f.folder
   st.current_folder = f.folder
   M.populate()
 
   if st.folders_win and api.nvim_win_is_valid(st.folders_win) then
-    for i, folder in ipairs(st.folders or {}) do
-      if folder.folder == f.folder then
-        api.nvim_win_set_cursor(st.folders_win, { i, 0 })
-        break
-      end
-    end
+    api.nvim_win_set_cursor(st.folders_win, { 1, 0 })
   end
 
   sync()

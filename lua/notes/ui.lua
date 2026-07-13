@@ -129,17 +129,6 @@ local function setup_highlights()
     sp = err and err.fg or nil,
     cterm = { undercurl = true },
   })
-  -- NotesDirActive: Directory fg (blue) on CursorLine bg — for the selected folder row.
-  -- No standard group combines both, so we compute it from the resolved colors.
-  local dir = api.nvim_get_hl(0, { name = 'Directory', link = false })
-  local cursor = api.nvim_get_hl(0, { name = 'CursorLine', link = false })
-  api.nvim_set_hl(0, 'NotesDirActive', {
-    fg = dir.fg,
-    bg = cursor.bg,
-    bold = dir.bold or false,
-    ctermfg = dir.ctermfg,
-    ctermbg = cursor.ctermbg,
-  })
 end
 
 -- Replace the editor with the placeholder scratch buffer (no file open).
@@ -256,16 +245,6 @@ local function setup_panel_autocmds(st)
     end,
   })
 
-  api.nvim_create_autocmd('CursorMoved', {
-    group = group,
-    buffer = st.folders_buf,
-    callback = function()
-      if api.nvim_get_current_win() ~= st.folders_win then
-        return
-      end
-      require('notes.picker').select_folder()
-    end,
-  })
 end
 
 local function setup_autocmds(st)
@@ -372,6 +351,7 @@ function M.open()
     width = cfg().folders_width,
   })
   list_win_opts(st.folders_win)
+  vim.wo[st.folders_win].cursorline = true -- навигационная подсветка строки папки
   vim.wo[st.folders_win].winfixwidth = true
   vim.wo[st.folders_win].statusline = ' Folders'
 
@@ -517,6 +497,7 @@ function M.toggle_panels()
       width = cfg().folders_width,
     })
     list_win_opts(st.folders_win)
+    vim.wo[st.folders_win].cursorline = true -- навигационная подсветка строки папки
     vim.wo[st.folders_win].winfixwidth = true
     vim.wo[st.folders_win].statusline = ' Folders'
 

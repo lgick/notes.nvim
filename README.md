@@ -36,7 +36,7 @@ Folders nest to any depth, shown drill-down one level at a time (`o` to enter / 
 
 - **Two-pane, macOS-Notes-style UI** — opens in a new full-screen tab: **folders** (left column) and **notes** (right column) on top, the editor on the bottom. Closing notes closes the tab.
 - **Title from content** — a note has no manual filename. Its title is the **first non-blank line** of its text; an empty note is titled **"New Note"** and is always pinned to the top of the list. On disk each note is an opaque ID file (`.md` extension, e.g. `20260627143000.md`), so editing a title never churns git history or collides. The notes column shows `dd.mm.yyyy - Title`, sorted by modification time (newest first). **The title in the list updates live as you type**, without saving.
-- **Nested folders, drill-down navigation** — the folders column shows one level at a time: row 1 is the current level (**"Notes"** at the root, or `Notes/<path>/ ..` once you've drilled in), followed by its immediate subfolders, sorted so the one whose subtree has the most recently edited note comes first. Press `o` on a subfolder to enter it, or `o` on row 1 to go back up. Selecting a row filters the notes column to that folder's direct notes. New folders (`a`) are created inside the current level. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
+- **Nested folders, drill-down navigation** — the folders column shows one level at a time: row 1 is the current level (**"Notes"** at the root, or `Notes/<path>/ ..` once you've drilled in), followed by its immediate subfolders, sorted so the one whose subtree has the most recently edited note comes first. Press `o` on a subfolder to enter it and load its notes into the notes column, or `o` on row 1 to go back up. Moving the cursor alone does not reload the notes column — only entering a folder with `o` does; the folders column uses a native `cursorline` to show which row is under the cursor. New folders (`a`) are created inside the current level. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
 - **Move by cursor** — press `x` on a note (or a folder) to mark it (highlighted with the selection color); press `x` again on the same item to cancel. For a note, navigate to a folder in the folders column and press `p` to drop it there. For a folder, navigate within the folders column itself (drill in/out with `o`, move the cursor) to the destination and press `p`. The destination folder becomes the selected one and rises to the top of the folders column; for a moved folder, the column also drills into the destination so the moved folder shows up as one of its children. Only a subfolder (a child row) can be marked — the folder you're currently viewing (row 1, including the root "Notes") can't be moved from inside itself. A folder also can't be moved into itself or one of its own subfolders.
 - **Native editing** — the editor window behaves like a normal `markdown` file window (`number`, `cursorline`, `signcolumn`), so global `InsertEnter`/`InsertLeave` styling and statusline plugins work inside it.
 - **Instant UI updates** — the note list updates immediately on `:w` (sort order, title); git sync runs in the background.
@@ -159,7 +159,7 @@ All keys are configurable via `config.keys` (see above).
 
 | Key | Action | Where |
 |-----|--------|-------|
-| `j` / `k` | Move cursor → filter notes to that folder | folders |
+| `j` / `k` | Move cursor (navigate; press `o` to enter/load the folder) | folders |
 | `a` | Create a folder inside the current level | folders |
 | `r` | Rename the selected folder | folders |
 | `d` | Delete the selected folder (confirmation) | folders |
@@ -191,13 +191,10 @@ Override these to customize colors (they link to sensible defaults):
 | `NotesFile` | `Normal` | note rows (defined for overriding; not applied per-row by default) |
 | `NotesTitle` | `bold` | the title text of each note row (after the date prefix) |
 | `NotesActive` | `CursorLine` | the currently open note in the notes column |
-| `NotesDirActive` | computed | the selected folder in the folders column |
 | `NotesCut` | `Visual` | the note or folder marked for moving (`x`) |
 | `NotesConflict` | undercurl, `sp` from `DiagnosticError` | wavy error underline on a note in a merge conflict, and on its folder |
 
-`NotesDirActive` is computed at open time from the resolved colors of `Directory` (fg) and `CursorLine` (bg), combining the folder color with the selection background. Override it with an explicit `nvim_set_hl` call in your config after setup.
-
-`NotesActive` and `NotesDirActive` both use a low-priority (0) highlight over the row text, so `NotesCut` (priority 200) and `NotesConflict` (priority 300) are never hidden by them even when both land on the same row — a marked-for-move or conflicted note/folder stays visibly highlighted even while it's also the currently selected one. The folders and notes windows do not use `cursorline`; the terminal cursor shows the current position.
+`NotesActive` and `NotesDir` both use a low-priority (0) highlight over the row text, so `NotesCut` (priority 200) and `NotesConflict` (priority 300) are never hidden by them even when both land on the same row — a marked-for-move or conflicted note/folder stays visibly highlighted even while it's also under the cursor. The notes window does not use `cursorline`; the terminal cursor shows the current position. The folders column is the exception: it uses a native `cursorline` as its navigation indicator, since moving the cursor there no longer changes what's shown in the notes column.
 
 ### Statusline plugins
 

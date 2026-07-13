@@ -384,7 +384,7 @@ do
   check('old path gone', fn.filereadable(dir .. '/movable') == 0)
   check('cut cleared', notes.state.cut == nil)
   check('target folder selected', notes.state.current_folder == 'Target')
-  check('target folder first among real folders', notes.state.folders[2].folder == 'Target', folder_names()[2])
+  check('drilled into target folder', notes.state.main_folder == 'Target')
   check(
     'notes column shows target folder note',
     #notes.state.items == 1 and notes.state.items[1].title == 'move me',
@@ -422,6 +422,11 @@ do
   -- force the exact collision: a_src dir mtime == z_dst note mtime (same second)
   fn.system({ 'touch', '-t', '202601011200', dir .. '/a_src' })
   fn.system({ 'touch', '-t', '202601011200', dir .. '/z_dst/note' })
+
+  -- paste_note drills into the destination; go back to root to compare a_src/z_dst
+  -- as siblings again
+  notes.state.main_folder = nil
+  notes.state.current_folder = nil
 
   -- re-scan multiple times: order must be stable and put the destination first
   for _ = 1, 5 do
@@ -1261,9 +1266,9 @@ do
   notes.close()
 end
 
--- ── cut highlight stays visible when the cut folder is also the selected one ───
+-- ── cut highlight outranks the base folder-row highlight ───────────────────────
 do
-  io.write('cut_folder highlight visible on the selected row\n')
+  io.write('cut_folder highlight outranks base NotesDir\n')
   local dir = tmpdir()
   writefile(dir .. '/A/note', { 'a note' })
 
@@ -1275,8 +1280,7 @@ do
     end
   end
   api.nvim_win_set_cursor(notes.state.folders_win, { a_row, 0 })
-  picker.select_folder() -- A becomes current_folder (selected/active row)
-  picker.cut_folder() -- A is now cut AND selected on the same row
+  picker.cut_folder() -- A is now marked for moving
 
   local ns_cut = api.nvim_create_namespace('notes_list')
   local marks = api.nvim_buf_get_extmarks(
@@ -1292,7 +1296,7 @@ do
       cut_priority = m[4].priority
     end
   end
-  check('NotesCut extmark present on the selected row', cut_priority ~= nil)
+  check('NotesCut extmark present on the marked row', cut_priority ~= nil)
 
   local ns_folders = api.nvim_create_namespace('notes_folders')
   local dir_marks = api.nvim_buf_get_extmarks(
@@ -1309,7 +1313,7 @@ do
     end
   end
   check(
-    'NotesCut outranks the base NotesDirActive highlight',
+    'NotesCut outranks the base NotesDir highlight',
     cut_priority ~= nil and dir_priority ~= nil and cut_priority > dir_priority,
     'cut=' .. tostring(cut_priority) .. ' dir=' .. tostring(dir_priority)
   )
