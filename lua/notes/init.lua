@@ -1,4 +1,4 @@
--- notes.nvim — notes in a filetree explorer + editor tab, with GitHub sync
+-- notes.nvim — notes in floating windows (search + flat list + editor) with GitHub sync
 
 local M = {}
 
@@ -7,51 +7,48 @@ local api = vim.api
 M.config = {
   dir = vim.fn.expand('~/.notes'), -- local notes directory (git worktree)
   repo = '', -- SSH remote, e.g. 'git@github.com:user/notes.git'
-  list_height = 10, -- height of the explorer window (content rows)
+  list_height = 10, -- height of the folders/notes row (content rows)
+  folders_width = 25, -- width of the folders column
   keys = {
-    open_file = '<CR>', -- explorer: folder → expand/collapse; note → focus editor
-    create = 'a', -- explorer: create a note in the context folder
-    create_folder = 'A', -- explorer: create a folder in the context folder
-    delete = 'd', -- explorer: delete the note/folder under the cursor
-    rename = 'r', -- explorer: rename the folder under the cursor
-    move = 'x', -- explorer: mark the note/folder under the cursor for moving
-    paste = 'p', -- explorer: drop the marked note/folder into the context folder
-    refresh = 'R', -- refresh the tree
+    open_file = '<CR>', -- folders: select folder / drop a moved note; notes: focus editor
+    create = 'a', -- folders: create a folder; notes: create a note (in the current folder)
+    delete = 'd', -- folders: delete the folder; notes: delete the note
+    rename = 'r', -- folders: rename the selected folder
+    move = 'x', -- notes: mark note for moving; folders: mark folder for moving
+    paste = 'p', -- folders: drop the marked note/folder into the selected folder
+    refresh = 'R', -- refresh the list
     open_github = 'O', -- open the notes repo in the browser
-    scroll_down = '<C-n>', -- scroll the open note down
-    scroll_up = '<C-p>', -- scroll the open note up
+    scroll_down = '<C-n>', -- notes: scroll the open note down
+    scroll_up = '<C-p>', -- notes: scroll the open note up
     close = 'q', -- close notes (works from any notes window)
     window_nav = '<C-w>', -- prefix: h/j/k/l → move between windows (wincmd)
-    toggle_panels = '<C-t>', -- hide/show the explorer
-    change_folder = 'o', -- explorer: folder → expand/collapse; note → focus editor
+    toggle_panels = '<C-t>', -- hide/show Folders + Notes columns
+    change_folder = 'o', -- folders: enter the folder under cursor / go up from the main row
   },
   -- Override sync status icons; nil = auto (Nerd Font glyph if nvim-web-devicons loaded, else Unicode)
   sync_icons = nil,
-  -- Override tree icons; nil = auto (Nerd Font folder glyphs if nvim-web-devicons loaded,
-  -- else Unicode arrows). Table: { folder = '…', folder_open = '…', note = '…' }.
-  tree_icons = nil,
 }
 
 M.state = {
   synced = false, -- whether pull has run this session
   closing = false, -- re-entrancy guard
   tab = nil, -- tabpage handle for the notes tab
-  explorer_win = nil, -- window id of the explorer (tree) window
-  explorer_buf = nil, -- buffer id of the explorer (tree) window
+  folders_win = nil,
+  folders_buf = nil,
+  list_win = nil, -- notes column window
+  list_buf = nil,
   edit_win = nil,
   edit_buf = nil,
   current_file = nil, -- path of the file currently open in the editor
+  current_folder = nil, -- selected folder path (relative, any depth); nil = "Notes" (root)
+  main_folder = nil, -- relative path of the folders column's current drill-down level; nil = root
   cut = nil, -- path of the note marked for moving (set by `x`)
-  cut_folder = nil, -- relative path of the folder marked for moving (set by `x`)
-  root_expanded = true, -- whether the virtual root row ("Notes/") is expanded; a
-                         -- dedicated boolean (not a member of expanded_folders,
-                         -- which is pruned against real folders on disk and where
-                         -- '' would never be a valid member)
-  expanded_folders = nil, -- set { [rel folder path] = true } of expanded folders; nil = none
+  cut_folder = nil, -- relative path of the folder marked for moving (set by `x` in the folders column)
+  folders = nil, -- array of { name, folder, is_main }; folders[1] is the main row
   notes_all = nil, -- full scan: array of { file, folder, title, mtime, empty }
-  tree_items = nil, -- flat tree rows; buffer line n → tree_items[n]
+  items = nil, -- filtered notes for the current folder
   conflicts = nil, -- set { [abs path] = true } of unmerged (conflicted) notes; nil = none
-  panels_hidden = false, -- true while the explorer is toggled off
+  panels_hidden = false, -- true while Folders + Notes columns are toggled off
 }
 
 function M.is_open()
@@ -62,17 +59,20 @@ function M.is_open()
     end
     -- tab was externally closed; wipe stale state so old window IDs can't trigger autocmds
     st.tab = nil
-    st.explorer_win = nil
-    st.explorer_buf = nil
+    st.folders_win = nil
+    st.folders_buf = nil
+    st.list_win = nil
+    st.list_buf = nil
     st.edit_win = nil
     st.edit_buf = nil
     st.current_file = nil
+    st.current_folder = nil
+    st.main_folder = nil
     st.cut = nil
     st.cut_folder = nil
-    st.root_expanded = true
-    st.expanded_folders = nil
+    st.items = nil
     st.notes_all = nil
-    st.tree_items = nil
+    st.folders = nil
     st.conflicts = nil
     st.panels_hidden = false
   end
@@ -81,8 +81,8 @@ end
 
 function M.open()
   if M.is_open() then
-    if M.state.explorer_win and api.nvim_win_is_valid(M.state.explorer_win) then
-      api.nvim_set_current_win(M.state.explorer_win)
+    if M.state.list_win and api.nvim_win_is_valid(M.state.list_win) then
+      api.nvim_set_current_win(M.state.list_win)
     end
     return
   end
@@ -91,7 +91,7 @@ function M.open()
   local ui = require('notes.ui')
   local picker = require('notes.picker')
 
-  -- open immediately; tree refreshes after sync completes
+  -- open immediately; list refreshes after sync completes
   ui.open()
   picker.populate()
 

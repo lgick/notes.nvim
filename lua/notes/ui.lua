@@ -1,4 +1,4 @@
--- Tab-based layout: filetree explorer (top) + editor (bottom)
+-- Tab-based layout: search (top) + folders | notes (middle) + editor (bottom)
 
 local M = {}
 
@@ -7,10 +7,6 @@ local fn = vim.fn
 
 -- saved value of `tabline` before we override it; nil means we didn't override
 local _old_tabline = nil
-
--- saved value of `guicursor` while the explorer buffer is focused; nil means the
--- cursor isn't currently hidden. See setup_panel_autocmds' BufEnter/BufLeave.
-local _old_guicursor = nil
 
 -- Sync status icons shown in the tab title when a remote repo is configured.
 -- Nerd Font glyphs are used when nvim-web-devicons is already loaded in the session
@@ -23,13 +19,6 @@ local SYNC_ICONS = {
 local SPIN_FRAMES = { '\xe2\xa0\x8b', '\xe2\xa0\x99', '\xe2\xa0\xb9', '\xe2\xa0\xb8',
                       '\xe2\xa0\xbc', '\xe2\xa0\xb4', '\xe2\xa0\xa6', '\xe2\xa0\xa7',
                       '\xe2\xa0\x87', '\xe2\xa0\x8f' } -- ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
-
--- Tree icons shown on folder rows (closed/open). No default note icon: notes are
--- distinguished by indent + date, not an icon (see FILETREE_EXPLORER_VISUAL.md).
-local TREE_ICONS = {
-  folder      = { plain = '\xe2\x96\xb6', nf = '\xf3\xb0\x89\x8b' }, -- ▶ / nf-md-folder
-  folder_open = { plain = '\xe2\x96\xbc', nf = '\xf3\xb0\x9d\xb0' }, -- ▼ / nf-md-folder_open
-}
 
 local _sync_timer = nil
 local _sync_frame = 0
@@ -45,25 +34,6 @@ end
 local function has_nerd_fonts()
   return package.loaded['nvim-web-devicons'] ~= nil
     or pcall(require, 'nvim-web-devicons')
-end
-
--- Resolved tree icons for the current session: user override (config.tree_icons)
--- wins per key, otherwise Nerd Font glyph (if available) or the plain fallback.
-function M.tree_icons()
-  local custom = require('notes').config.tree_icons
-  local nf = has_nerd_fonts()
-  local function pick(key)
-    if custom and custom[key] then
-      return custom[key]
-    end
-    local row = TREE_ICONS[key]
-    return row and (nf and row.nf or row.plain) or ''
-  end
-  return {
-    folder = pick('folder'),
-    folder_open = pick('folder_open'),
-    note = (custom and custom.note) or '',
-  }
 end
 
 function M.set_sync_status(status)
@@ -159,11 +129,17 @@ local function setup_highlights()
     sp = err and err.fg or nil,
     cterm = { undercurl = true },
   })
-  -- fully transparent (blend=100): referenced by guicursor while the explorer is
-  -- focused so the block cursor doesn't sit on top of the tree glyphs (▶/▼).
-  -- Only takes visible effect in terminals/GUIs that render Nvim's cursor color
-  -- (kitty, wezterm, alacritty, Neovide, …); others just show their own cursor.
-  api.nvim_set_hl(0, 'NotesHiddenCursor', { default = true, blend = 100 })
+  -- NotesDirActive: Directory fg (blue) on CursorLine bg — for the selected folder row.
+  -- No standard group combines both, so we compute it from the resolved colors.
+  local dir = api.nvim_get_hl(0, { name = 'Directory', link = false })
+  local cursor = api.nvim_get_hl(0, { name = 'CursorLine', link = false })
+  api.nvim_set_hl(0, 'NotesDirActive', {
+    fg = dir.fg,
+    bg = cursor.bg,
+    bold = dir.bold or false,
+    ctermfg = dir.ctermfg,
+    ctermbg = cursor.ctermbg,
+  })
 end
 
 -- Replace the editor with the placeholder scratch buffer (no file open).
@@ -213,7 +189,7 @@ function M.show_placeholder()
   end
 end
 
--- Scroll the open file from the explorer: sends <C-e>/<C-y> inside edit_win
+-- Scroll the open file from search/notes: sends <C-e>/<C-y> inside edit_win
 function M.scroll_edit(delta)
   local st = require('notes').state
   if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
@@ -230,9 +206,9 @@ function M.set_nav_keymaps(buf)
   local keys = cfg().keys
 
   -- single prefix + synchronous getcharstr: no timeoutlen delay.
-  -- h/j/k/l move spatially between the two windows via wincmd.
-  -- Exception: k from the editor always goes to the explorer window, because
-  -- wincmd k lands wherever the cursor happens to be above.
+  -- h/j/k/l move spatially between the three windows via wincmd.
+  -- Exception: k from the editor always goes to the notes column (not folders),
+  -- because wincmd k lands in whichever of the two top windows is above the cursor.
   local function nav()
     local ok, char = pcall(vim.fn.getcharstr)
     if not ok then
@@ -243,8 +219,8 @@ function M.set_nav_keymaps(buf)
       return
     end
     if key == 'k' and api.nvim_get_current_win() == st.edit_win then
-      if st.explorer_win and api.nvim_win_is_valid(st.explorer_win) then
-        api.nvim_set_current_win(st.explorer_win)
+      if st.list_win and api.nvim_win_is_valid(st.list_win) then
+        api.nvim_set_current_win(st.list_win)
         return
       end
     end
@@ -260,46 +236,30 @@ function M.set_nav_keymaps(buf)
   end, { buffer = buf, silent = true, desc = 'Notes: window nav' })
 end
 
--- CursorMoved/BufEnter/BufLeave handlers for the explorer buffer. Kept in a
--- separate augroup so they can be re-registered after toggle_panels recreates
--- the buffer.
+-- CursorMoved handlers for the two panel buffers (list + folders). Kept in a
+-- separate augroup so they can be re-registered after toggle_panels recreates them.
 local function setup_panel_autocmds(st)
   local group = api.nvim_create_augroup('NotesPanels', { clear = true })
 
   api.nvim_create_autocmd('CursorMoved', {
     group = group,
-    buffer = st.explorer_buf,
+    buffer = st.list_buf,
     callback = function()
-      if api.nvim_get_current_win() ~= st.explorer_win then
+      if api.nvim_get_current_win() ~= st.list_win then
         return
       end
       require('notes.picker').open_selected()
     end,
   })
 
-  -- guicursor is a global option (Neovim has no per-window cursor-visibility
-  -- knob), so hide/restore on buffer focus rather than window focus; the guard
-  -- on _old_guicursor prevents a stray double BufEnter from saving an
-  -- already-hidden value as the "original" one.
-  api.nvim_create_autocmd('BufEnter', {
+  api.nvim_create_autocmd('CursorMoved', {
     group = group,
-    buffer = st.explorer_buf,
+    buffer = st.folders_buf,
     callback = function()
-      if _old_guicursor then
+      if api.nvim_get_current_win() ~= st.folders_win then
         return
       end
-      _old_guicursor = vim.o.guicursor
-      vim.o.guicursor = vim.o.guicursor .. ',a:block-NotesHiddenCursor'
-    end,
-  })
-  api.nvim_create_autocmd('BufLeave', {
-    group = group,
-    buffer = st.explorer_buf,
-    callback = function()
-      if _old_guicursor then
-        vim.o.guicursor = _old_guicursor
-        _old_guicursor = nil
-      end
+      require('notes.picker').select_folder()
     end,
   })
 end
@@ -314,7 +274,7 @@ local function setup_autocmds(st)
         return
       end
       local closed = tonumber(args.match)
-      if closed == st.explorer_win or closed == st.edit_win then
+      if closed == st.folders_win or closed == st.list_win or closed == st.edit_win then
         vim.schedule(function()
           require('notes').close()
         end)
@@ -349,10 +309,7 @@ end
 local function list_win_opts(win)
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false
-  -- full-width row highlight under the cursor; the block cursor itself is hidden
-  -- (see setup_panel_autocmds' BufEnter/BufLeave) so this is the only "where am I"
-  -- indicator, distinct from NotesActive which persistently marks the open note
-  vim.wo[win].cursorline = true
+  vim.wo[win].cursorline = false
   vim.wo[win].signcolumn = 'no'
   vim.wo[win].statuscolumn = ''
   vim.wo[win].winfixheight = true
@@ -382,37 +339,48 @@ function M.open()
   st.edit_win = base_win
   M.show_placeholder()
 
-  -- explorer: full-width split above the editor
-  st.explorer_buf = api.nvim_create_buf(false, true)
-  vim.bo[st.explorer_buf].buftype = 'nofile'
-  vim.bo[st.explorer_buf].bufhidden = 'wipe'
-  vim.bo[st.explorer_buf].swapfile = false
-  vim.bo[st.explorer_buf].filetype = 'NotesExplorer'
-  vim.bo[st.explorer_buf].modifiable = false
-
-  -- register the BufEnter/BufLeave (guicursor hide) + CursorMoved handlers BEFORE
-  -- opening the window below with enter=true: entering happens as part of window
-  -- creation itself, so BufEnter would silently not fire if the autocmd were
-  -- registered afterwards (nothing was listening yet at the moment it fired)
-  setup_panel_autocmds(st)
-
-  st.explorer_win = api.nvim_open_win(st.explorer_buf, true, {
+  -- notes column: full-width split above editor (split into two columns below)
+  st.list_buf = api.nvim_create_buf(false, true)
+  vim.bo[st.list_buf].buftype = 'nofile'
+  vim.bo[st.list_buf].bufhidden = 'wipe'
+  vim.bo[st.list_buf].swapfile = false
+  vim.bo[st.list_buf].filetype = 'NotesList'
+  vim.bo[st.list_buf].modifiable = false
+  st.list_win = api.nvim_open_win(st.list_buf, true, {
     split = 'above',
     win = base_win,
     height = cfg().list_height,
   })
-  list_win_opts(st.explorer_win)
-  vim.wo[st.explorer_win].statusline = ' Explorer'
+  list_win_opts(st.list_win)
+  vim.wo[st.list_win].statusline = ' Notes'
+
+  -- folders column: split off the left of the notes column
+  st.folders_buf = api.nvim_create_buf(false, true)
+  vim.bo[st.folders_buf].buftype = 'nofile'
+  vim.bo[st.folders_buf].bufhidden = 'wipe'
+  vim.bo[st.folders_buf].swapfile = false
+  vim.bo[st.folders_buf].filetype = 'NotesFolders'
+  vim.bo[st.folders_buf].modifiable = false
+  st.folders_win = api.nvim_open_win(st.folders_buf, false, {
+    split = 'left',
+    win = st.list_win,
+    width = cfg().folders_width,
+  })
+  list_win_opts(st.folders_win)
+  vim.wo[st.folders_win].winfixwidth = true
+  vim.wo[st.folders_win].statusline = ' Folders'
 
   local picker = require('notes.picker')
-  picker.attach_explorer(st.explorer_buf)
-  M.set_nav_keymaps(st.explorer_buf)
+  picker.attach_folders(st.folders_buf)
+  picker.attach_notes(st.list_buf)
+  M.set_nav_keymaps(st.folders_buf)
+  M.set_nav_keymaps(st.list_buf)
   M.set_nav_keymaps(st.edit_buf)
 
   setup_autocmds(st)
 
-  -- focus the explorer on open
-  api.nvim_set_current_win(st.explorer_win)
+  -- focus the folders column on open
+  api.nvim_set_current_win(st.folders_win)
 end
 
 local function editor_path_label(path)
@@ -488,7 +456,7 @@ function M.open_in_edit(path)
     M.toggle_panels()
   end, { buffer = buf, silent = true, desc = 'Notes: toggle panels' })
 
-  -- live title update: update the tree while typing, without a disk read.
+  -- live title update: update the notes column while typing, without a disk read.
   -- clear any previous handler on this buffer first so revisiting a note does not
   -- stack duplicate autocmds (each would re-run update_live_title per keystroke)
   api.nvim_clear_autocmds({ group = live_title_group, buffer = buf })
@@ -499,13 +467,13 @@ function M.open_in_edit(path)
       require('notes.picker').update_live_title(buf, path)
     end,
   })
-  -- focus is NOT moved: opening a note leaves the cursor in the explorer window
+  -- focus is NOT moved: opening a note leaves the cursor in the notes/folders window
 end
 
--- Toggle the explorer window. Hidden by closing the window; the buffer is wiped
--- (bufhidden=wipe). On restore the window and buffer are recreated and
--- re-populated. State is nil'd BEFORE closing so WinClosed doesn't mistake the
--- controlled close for an external one and call notes.close().
+-- Toggle the Folders + Notes columns. Panels are hidden by closing their windows;
+-- the buffers are wiped (bufhidden=wipe). On restore the windows and buffers are
+-- recreated and re-populated. State is nil'd BEFORE closing so WinClosed doesn't
+-- mistake the controlled close for an external one and call notes.close().
 function M.toggle_panels()
   local notes = require('notes')
   local st = notes.state
@@ -518,36 +486,58 @@ function M.toggle_panels()
       return
     end
 
-    st.explorer_buf = api.nvim_create_buf(false, true)
-    vim.bo[st.explorer_buf].buftype = 'nofile'
-    vim.bo[st.explorer_buf].bufhidden = 'wipe'
-    vim.bo[st.explorer_buf].swapfile = false
-    vim.bo[st.explorer_buf].filetype = 'NotesExplorer'
-    vim.bo[st.explorer_buf].modifiable = false
-    st.explorer_win = api.nvim_open_win(st.explorer_buf, false, {
+    st.list_buf = api.nvim_create_buf(false, true)
+    vim.bo[st.list_buf].buftype = 'nofile'
+    vim.bo[st.list_buf].bufhidden = 'wipe'
+    vim.bo[st.list_buf].swapfile = false
+    vim.bo[st.list_buf].filetype = 'NotesList'
+    vim.bo[st.list_buf].modifiable = false
+    st.list_win = api.nvim_open_win(st.list_buf, false, {
       split = 'above',
       win = st.edit_win,
       height = cfg().list_height,
     })
-    list_win_opts(st.explorer_win)
-    vim.wo[st.explorer_win].statusline = ' Explorer'
+    list_win_opts(st.list_win)
+    vim.wo[st.list_win].statusline = ' Notes'
+
+    st.folders_buf = api.nvim_create_buf(false, true)
+    vim.bo[st.folders_buf].buftype = 'nofile'
+    vim.bo[st.folders_buf].bufhidden = 'wipe'
+    vim.bo[st.folders_buf].swapfile = false
+    vim.bo[st.folders_buf].filetype = 'NotesFolders'
+    vim.bo[st.folders_buf].modifiable = false
+    st.folders_win = api.nvim_open_win(st.folders_buf, false, {
+      split = 'left',
+      win = st.list_win,
+      width = cfg().folders_width,
+    })
+    list_win_opts(st.folders_win)
+    vim.wo[st.folders_win].winfixwidth = true
+    vim.wo[st.folders_win].statusline = ' Folders'
 
     local picker = require('notes.picker')
-    picker.attach_explorer(st.explorer_buf)
-    M.set_nav_keymaps(st.explorer_buf)
+    picker.attach_folders(st.folders_buf)
+    picker.attach_notes(st.list_buf)
+    M.set_nav_keymaps(st.folders_buf)
+    M.set_nav_keymaps(st.list_buf)
 
     setup_panel_autocmds(st)
     picker.populate()
     st.panels_hidden = false
   else
-    local ew = st.explorer_win
-    -- nil state before close: WinClosed compares against st.explorer_win, which
-    -- is now nil, so notes.close() is not triggered
-    st.explorer_win = nil
-    st.explorer_buf = nil
+    local fw, lw = st.folders_win, st.list_win
+    -- nil state before close: WinClosed compares against st.folders_win/list_win,
+    -- which are now nil, so notes.close() is not triggered
+    st.folders_win = nil
+    st.folders_buf = nil
+    st.list_win = nil
+    st.list_buf = nil
     st.panels_hidden = true
-    if ew and api.nvim_win_is_valid(ew) then
-      api.nvim_win_close(ew, true)
+    if fw and api.nvim_win_is_valid(fw) then
+      api.nvim_win_close(fw, true)
+    end
+    if lw and api.nvim_win_is_valid(lw) then
+      api.nvim_win_close(lw, true)
     end
     if st.edit_win and api.nvim_win_is_valid(st.edit_win) then
       api.nvim_set_current_win(st.edit_win)
@@ -564,26 +554,22 @@ function M.close()
 
   st.closing = true
 
-  -- restore guicursor if the tab is closed directly out of the explorer (its own
-  -- BufLeave wouldn't otherwise fire before the buffer is wiped by tabclose)
-  if _old_guicursor then
-    vim.o.guicursor = _old_guicursor
-    _old_guicursor = nil
-  end
-
   local tab = st.tab
   st.tab = nil
-  st.explorer_win = nil
-  st.explorer_buf = nil
+  st.folders_win = nil
+  st.folders_buf = nil
+  st.list_win = nil
+  st.list_buf = nil
   st.edit_win = nil
   st.edit_buf = nil
   st.current_file = nil
+  st.current_folder = nil
+  st.main_folder = nil
   st.cut = nil
   st.cut_folder = nil
-  st.root_expanded = true
-  st.expanded_folders = nil
-  st.tree_items = nil
+  st.items = nil
   st.notes_all = nil
+  st.folders = nil
   st.conflicts = nil
   st.panels_hidden = false
 
