@@ -1,5 +1,6 @@
--- Two-pane model (macOS Notes style): folders column + notes column.
--- Notes are ID-named files; the title is the first non-blank line of their content.
+-- Filetree explorer model: a single tree (folders + notes, any depth) rendered
+-- into one buffer, with the editor below. Notes are ID-named files; the title is
+-- the first non-blank line of their content.
 
 local M = {}
 
@@ -13,11 +14,10 @@ local ns_title = api.nvim_create_namespace('notes_title')
 local ns_conflict = api.nvim_create_namespace('notes_conflict')
 
 local EMPTY_TITLE = 'New Note'
-local ROOT_LABEL = 'Notes' -- virtual folder for notes that live at the repo root
 
 -- Relative paths of every real folder at any depth from the last scan() ("Work",
--- "Work/Projects"). Module-local: build_folders() derives the visible drill-down
--- level from it; not part of the documented state.
+-- "Work/Projects"). Module-local: build_tree() derives the tree from it; not
+-- part of the documented state.
 local all_folders = {}
 
 local function cfg()
@@ -34,9 +34,8 @@ local function is_conflicted(file)
 end
 M.is_conflicted = is_conflicted
 
--- True when any note inside `folder` (relative path, any depth) OR any of its
--- descendants is in a merge conflict. `folder == nil` means the root "Notes" main
--- row, which covers the whole tree (root is the ancestor of every folder).
+-- True when any note inside `folder` (relative path, any depth; '' = root) OR any
+-- of its descendants is in a merge conflict. '' covers the whole tree.
 local function folder_has_conflict(folder)
   local st = state()
   if not st.conflicts then
@@ -94,8 +93,8 @@ end
 
 -- Scan walks the notes directory recursively, at any depth. Builds the flat notes
 -- list (state.notes_all) and the flat list of all folder relative paths
--- (all_folders); build_folders() later derives the visible drill-down level from
--- the latter. Hidden entries (.git, .gitkeep) are skipped.
+-- (all_folders); build_tree() later derives the visible tree from the latter.
+-- Hidden entries (.git, .gitkeep) are skipped.
 function M.scan()
   local dir = cfg().dir
   local real = {} -- relative paths of every folder, any depth
@@ -163,20 +162,36 @@ local function folder_recursive_mtime(folder_rel)
   return s and s.mtime.sec or 0, false
 end
 
--- Builds the visible drill-down level of the folders column from all_folders:
--- row 1 is the current level (main_folder, nil = root "Notes"), followed by its
--- immediate children sorted by recursive freshness (same strict tie-break as
--- before: freshness → note-bearing → name, since table.sort is not stable).
-function M.build_folders()
-  local main = state().main_folder
-  local folders = {
-    { name = main and main:match('[^/]+$') or ROOT_LABEL, folder = main, is_main = true },
-  }
+-- Drop expanded-folder entries whose path no longer exists in all_folders (folder
+-- deleted/renamed outside the plugin, or by a rename/delete action that didn't
+-- clean up its own key).
+local function prune_expanded()
+  local st = state()
+  if not st.expanded_folders then
+    return
+  end
+  local valid = {}
+  for _, f in ipairs(all_folders) do
+    valid[f] = true
+  end
+  for path in pairs(st.expanded_folders) do
+    if not valid[path] then
+      st.expanded_folders[path] = nil
+    end
+  end
+end
 
-  local prefix = main and (main .. '/') or ''
+-- Immediate children of `folder_rel` ('' = root) from all_folders, sorted by
+-- recursive freshness. Strict total order (table.sort is not stable): freshness →
+-- note-bearing → name. The note-bearing tie-break matters for paste: moving a note
+-- out of a folder empties it and bumps the *directory* mtime to the same second as
+-- the moved note's bumped mtime in the destination — without the tie-break the
+-- unstable sort could float the (empty) source above the destination.
+local function direct_children(folder_rel)
+  local prefix = folder_rel == '' and '' or (folder_rel .. '/')
   local children = {}
   for _, f in ipairs(all_folders) do
-    if main == nil then
+    if folder_rel == '' then
       if not f:find('/') then
         children[#children + 1] = f
       end
@@ -200,142 +215,152 @@ function M.build_folders()
     end
     return a < b
   end)
-
-  for _, f in ipairs(children) do
-    folders[#folders + 1] = { name = f:match('[^/]+$'), folder = f, is_main = false }
-  end
-
-  state().folders = folders
+  return children
 end
 
--- If the drill-down level or the selected folder vanished (deleted/renamed), fall
--- back up. Checked against disk, not state.folders: the folders column only shows
--- one level at a time, so a stale current_folder from a different branch of the
--- tree would not be found there even though it still exists.
-local function validate_folder()
-  local st = state()
-  local dir = cfg().dir
-  if st.main_folder and fn.isdirectory(dir .. '/' .. st.main_folder) == 0 then
-    st.main_folder, st.current_folder = nil, nil
-    return
-  end
-  if st.current_folder and fn.isdirectory(dir .. '/' .. st.current_folder) == 0 then
-    st.current_folder = st.main_folder
-  end
-end
-
--- current_folder nil = root "Notes" → notes with folder == ''; otherwise that folder.
-function M.filter()
-  local st = state()
-  local target = st.current_folder or ''
+-- Direct notes of `folder_rel` from state.notes_all; already sorted by scan()
+-- (empty-first, then mtime descending).
+local function direct_notes(folder_rel)
   local out = {}
-  for _, n in ipairs(st.notes_all or {}) do
-    if n.folder == target then
+  for _, n in ipairs(state().notes_all or {}) do
+    if n.folder == folder_rel then
       out[#out + 1] = n
     end
   end
-  st.items = out
+  return out
 end
 
--- Truncates s from the left with a leading '…' so its tail (the current folder's
--- name) stays visible within width, instead of Neovim's default right-truncation
--- (which would hide the name at deep nesting). No-op if s already fits.
-local function fit_left(s, width)
-  if fn.strdisplaywidth(s) <= width then
-    return s
-  end
-  local total = fn.strchars(s)
-  for drop = 1, total - 1 do
-    local tail = fn.strcharpart(s, drop, total - drop)
-    if fn.strdisplaywidth('…' .. tail) <= width then
-      return '…' .. tail
+-- Builds the flat tree (state.tree_items) by recursively walking from the root
+-- ('' ), descending into a folder only when it is in state.expanded_folders.
+-- Folders are listed before notes at each level.
+function M.build_tree()
+  local st = state()
+  st.expanded_folders = st.expanded_folders or {}
+  local items = {}
+
+  local function build_level(folder_rel, depth)
+    for _, f in ipairs(direct_children(folder_rel)) do
+      local expanded = st.expanded_folders[f] == true
+      items[#items + 1] = {
+        type = 'folder',
+        path = f,
+        name = f:match('[^/]+$'),
+        depth = depth,
+        expanded = expanded,
+      }
+      if expanded then
+        build_level(f, depth + 1)
+      end
+    end
+    for _, n in ipairs(direct_notes(folder_rel)) do
+      items[#items + 1] = {
+        type = 'note',
+        file = n.file,
+        folder = n.folder,
+        title = n.title,
+        mtime = n.mtime,
+        empty = n.empty,
+        depth = depth,
+      }
     end
   end
-  return '…'
+
+  build_level('', 0)
+  st.tree_items = items
 end
 
-function M.render_folders()
+local function note_key(file)
+  return 'note:' .. file
+end
+
+local function folder_key(path)
+  return 'folder:' .. path
+end
+
+local function item_key(it)
+  return it.type == 'folder' and folder_key(it.path) or note_key(it.file)
+end
+
+local function item_at_cursor()
   local st = state()
-  if not (st.folders_buf and api.nvim_buf_is_valid(st.folders_buf)) then
+  if not (st.explorer_win and api.nvim_win_is_valid(st.explorer_win)) then
+    return nil
+  end
+  local l = api.nvim_win_get_cursor(st.explorer_win)[1]
+  return (st.tree_items or {})[l]
+end
+M.item_at_cursor = item_at_cursor
+
+-- The folder to create/paste into: the folder under the cursor, or the folder of
+-- the note under the cursor; '' (root) if nothing is under the cursor.
+function M.context_folder()
+  local it = item_at_cursor()
+  if not it then
+    return ''
+  end
+  return it.type == 'folder' and it.path or it.folder
+end
+
+-- Move the explorer cursor onto the row matching `key` (as returned by item_key).
+-- Returns true if found.
+local function cursor_to(key)
+  local st = state()
+  if not (key and st.explorer_win and api.nvim_win_is_valid(st.explorer_win)) then
+    return false
+  end
+  for i, it in ipairs(st.tree_items or {}) do
+    if item_key(it) == key then
+      pcall(api.nvim_win_set_cursor, st.explorer_win, { i, 0 })
+      return true
+    end
+  end
+  return false
+end
+
+-- Expand `folder` so a newly created/moved child inside it is visible. Ancestors
+-- of `folder` are guaranteed already expanded: build_tree only ever surfaces an
+-- item whose full ancestor chain is expanded, and `folder` came from
+-- context_folder() (a currently visible row), so only `folder` itself needs it.
+local function expand(folder)
+  if folder ~= '' then
+    local st = state()
+    st.expanded_folders = st.expanded_folders or {}
+    st.expanded_folders[folder] = true
+  end
+end
+
+-- After a re-render, restore the cursor to the same logical item (by key) if it
+-- is still present; otherwise fall back to the active note's row, else row 1.
+-- Background re-renders (git sync, BufWritePost) must not yank the cursor to the
+-- top while the user is elsewhere in the tree.
+local function restore_cursor(prev_key)
+  local st = state()
+  if not (st.explorer_win and api.nvim_win_is_valid(st.explorer_win)) then
     return
   end
-
-  local width = (st.folders_win and api.nvim_win_is_valid(st.folders_win))
-      and api.nvim_win_get_width(st.folders_win)
-    or cfg().folders_width
-
-  local lines = {}
-  local folders = st.folders or {}
-  local n = #folders
-  for i, f in ipairs(folders) do
-    local line
-    if f.is_main then
-      -- root → "Notes/"; drilled-in level → "Notes/<path>/ .." ('..' hints `o` = up)
-      line = f.folder and (ROOT_LABEL .. '/' .. f.folder .. '/ ..') or (ROOT_LABEL .. '/')
-      line = fit_left(line, width)
-    elseif i == n then
-      line = '└─ ' .. f.name .. '/'
-    else
-      line = '├─ ' .. f.name .. '/'
-    end
-    lines[#lines + 1] = line
+  if cursor_to(prev_key) then
+    return
   end
-
-  vim.bo[st.folders_buf].modifiable = true
-  api.nvim_buf_set_lines(st.folders_buf, 0, -1, false, lines)
-  vim.bo[st.folders_buf].modifiable = false
-
-  api.nvim_buf_clear_namespace(st.folders_buf, ns_folders, 0, -1)
-  api.nvim_buf_clear_namespace(st.folders_buf, ns_conflict, 0, -1)
-  api.nvim_buf_clear_namespace(st.folders_buf, ns, 0, -1)
-  for i, f in ipairs(folders) do
-    local hl = f.folder == st.current_folder and 'NotesDirActive' or 'NotesDir'
-    -- hl_group (not line_hl_group) with a low priority, same as NotesActive in the
-    -- notes column: line_hl_group is a separate rendering layer that would override
-    -- hl_group (NotesCut, NotesConflict) regardless of priority, hiding them on the
-    -- selected/cut row. hl_group lets priority ordering apply instead.
-    api.nvim_buf_set_extmark(
-      st.folders_buf,
-      ns_folders,
-      i - 1,
-      0,
-      { end_col = #lines[i], hl_group = hl, priority = 0 }
-    )
-    if folder_has_conflict(f.folder) then
-      api.nvim_buf_set_extmark(st.folders_buf, ns_conflict, i - 1, 0, {
-        end_col = #lines[i],
-        hl_group = 'NotesConflict',
-        hl_mode = 'combine',
-        priority = 300,
-      })
-    end
-    if f.folder ~= nil and f.folder == st.cut_folder then
-      -- hl_group over the text only (not full width); priority > NotesDir/Active (0)
-      api.nvim_buf_set_extmark(
-        st.folders_buf,
-        ns,
-        i - 1,
-        0,
-        { end_col = #lines[i], hl_group = 'NotesCut', priority = 200 }
-      )
-    end
+  if st.current_file and cursor_to(note_key(st.current_file)) then
+    return
+  end
+  if st.tree_items and #st.tree_items > 0 then
+    pcall(api.nvim_win_set_cursor, st.explorer_win, { 1, 0 })
   end
 end
 
 function M.highlight_active()
   local st = state()
-  if not (st.list_buf and api.nvim_buf_is_valid(st.list_buf)) then
+  if not (st.explorer_buf and api.nvim_buf_is_valid(st.explorer_buf)) then
     return
   end
-  api.nvim_buf_clear_namespace(st.list_buf, ns_active, 0, -1)
+  api.nvim_buf_clear_namespace(st.explorer_buf, ns_active, 0, -1)
   if st.current_file then
-    for i, it in ipairs(st.items or {}) do
-      if it.file == st.current_file then
-        -- hl_group (same layer as NotesCut) so priority 0 reliably loses to NotesCut's 200.
-        -- line_hl_group is a separate rendering layer and would override hl_group regardless of priority.
-        local line = api.nvim_buf_get_lines(st.list_buf, i - 1, i, false)[1] or ''
+    for i, it in ipairs(st.tree_items or {}) do
+      if it.type == 'note' and it.file == st.current_file then
+        local line = api.nvim_buf_get_lines(st.explorer_buf, i - 1, i, false)[1] or ''
         api.nvim_buf_set_extmark(
-          st.list_buf,
+          st.explorer_buf,
           ns_active,
           i - 1,
           0,
@@ -347,83 +372,122 @@ function M.highlight_active()
   end
 end
 
-function M.render_notes()
+function M.render_tree()
   local st = state()
-  if not (st.list_buf and api.nvim_buf_is_valid(st.list_buf)) then
+  if not (st.explorer_buf and api.nvim_buf_is_valid(st.explorer_buf)) then
     return
   end
 
-  local lines = {}
-  for _, it in ipairs(st.items or {}) do
-    lines[#lines + 1] = os.date('%d.%m.%Y', it.mtime) .. ' - ' .. it.title
+  local prev_key = nil
+  if st.explorer_win and api.nvim_win_is_valid(st.explorer_win)
+      and api.nvim_get_current_win() == st.explorer_win then
+    local it = item_at_cursor()
+    if it then
+      prev_key = item_key(it)
+    end
   end
+
+  local icons = require('notes.ui').tree_icons()
+  local lines = {}
+  local title_col = {} -- byte offset of the title text, per line (notes only)
+
+  for _, it in ipairs(st.tree_items or {}) do
+    local indent = string.rep('  ', it.depth)
+    if it.type == 'folder' then
+      local glyph = it.expanded and icons.folder_open or icons.folder
+      lines[#lines + 1] = indent .. glyph .. ' ' .. it.name .. '/'
+    else
+      local prefix = indent .. (icons.note ~= '' and (icons.note .. ' ') or '')
+      local date = os.date('%d.%m.%Y', it.mtime) .. ' - '
+      lines[#lines + 1] = prefix .. date .. it.title
+      title_col[#lines] = #prefix + #date
+    end
+  end
+
   local empty = #lines == 0
   if empty then
     lines = { '(no notes)' }
+  else
+    -- Trailing blank row: an explicit "root" drop zone. Every folder/note row
+    -- resolves context_folder() to itself or its own folder, so without this the
+    -- root ('') could only be targeted when a root-level note happens to exist
+    -- under the cursor — this blank line (item_at_cursor() finds nothing there)
+    -- is always available for creating/pasting back at the top level.
+    lines[#lines + 1] = ''
   end
 
-  vim.bo[st.list_buf].modifiable = true
-  api.nvim_buf_set_lines(st.list_buf, 0, -1, false, lines)
-  vim.bo[st.list_buf].modifiable = false
+  vim.bo[st.explorer_buf].modifiable = true
+  api.nvim_buf_set_lines(st.explorer_buf, 0, -1, false, lines)
+  vim.bo[st.explorer_buf].modifiable = false
 
-  api.nvim_buf_clear_namespace(st.list_buf, ns, 0, -1)
-  api.nvim_buf_clear_namespace(st.list_buf, ns_title, 0, -1)
-  api.nvim_buf_clear_namespace(st.list_buf, ns_conflict, 0, -1)
+  api.nvim_buf_clear_namespace(st.explorer_buf, ns_folders, 0, -1)
+  api.nvim_buf_clear_namespace(st.explorer_buf, ns_title, 0, -1)
+  api.nvim_buf_clear_namespace(st.explorer_buf, ns_conflict, 0, -1)
+  api.nvim_buf_clear_namespace(st.explorer_buf, ns, 0, -1)
+
   if not empty then
-    local prefix = 13 -- len("dd.mm.yyyy - ")
-    for i, it in ipairs(st.items) do
-      api.nvim_buf_set_extmark(st.list_buf, ns_title, i - 1, prefix, {
-        end_col = #lines[i],
-        hl_group = 'NotesTitle',
-        hl_mode = 'combine',
-        priority = 100,
-      })
-      if is_conflicted(it.file) then
-        -- wavy error underline over the row text; combine so it overlays the title
-        -- color/bold rather than replacing them, priority above Title/Active/Cut
-        api.nvim_buf_set_extmark(st.list_buf, ns_conflict, i - 1, 0, {
-          end_col = #lines[i],
-          hl_group = 'NotesConflict',
-          hl_mode = 'combine',
-          priority = 300,
-        })
-      end
-      if it.file == st.cut then
-        -- hl_group over the text only (not full width); priority > NotesActive (0)
+    for i, it in ipairs(st.tree_items) do
+      local line = lines[i]
+      if it.type == 'folder' then
         api.nvim_buf_set_extmark(
-          st.list_buf,
-          ns,
+          st.explorer_buf,
+          ns_folders,
           i - 1,
           0,
-          { end_col = #lines[i], hl_group = 'NotesCut', priority = 200 }
+          { end_col = #line, hl_group = 'NotesDir', priority = 0 }
         )
-      end
-    end
-  end
-
-  -- Ставим курсор на активную заметку (current_file), а не жёстко на строку 1:
-  -- фоновые ре-рендеры (git-синхронизация по завершении, BufWritePost) иначе
-  -- перебрасывали бы курсор наверх и авто-открывали верхнюю заметку. Если открытой
-  -- заметки нет в текущем списке (первый показ, смена папки) — строка 1.
-  if st.list_win and api.nvim_win_is_valid(st.list_win) and not empty then
-    local row = 1
-    if st.current_file then
-      for i, it in ipairs(st.items) do
-        if it.file == st.current_file then
-          row = i
-          break
+        if folder_has_conflict(it.path) then
+          api.nvim_buf_set_extmark(st.explorer_buf, ns_conflict, i - 1, 0, {
+            end_col = #line,
+            hl_group = 'NotesConflict',
+            hl_mode = 'combine',
+            priority = 300,
+          })
+        end
+        if it.path == st.cut_folder then
+          api.nvim_buf_set_extmark(
+            st.explorer_buf,
+            ns,
+            i - 1,
+            0,
+            { end_col = #line, hl_group = 'NotesCut', priority = 200 }
+          )
+        end
+      else
+        api.nvim_buf_set_extmark(st.explorer_buf, ns_title, i - 1, title_col[i], {
+          end_col = #line,
+          hl_group = 'NotesTitle',
+          hl_mode = 'combine',
+          priority = 100,
+        })
+        if is_conflicted(it.file) then
+          api.nvim_buf_set_extmark(st.explorer_buf, ns_conflict, i - 1, 0, {
+            end_col = #line,
+            hl_group = 'NotesConflict',
+            hl_mode = 'combine',
+            priority = 300,
+          })
+        end
+        if it.file == st.cut then
+          api.nvim_buf_set_extmark(
+            st.explorer_buf,
+            ns,
+            i - 1,
+            0,
+            { end_col = #line, hl_group = 'NotesCut', priority = 200 }
+          )
         end
       end
     end
-    api.nvim_win_set_cursor(st.list_win, { row, 0 })
   end
 
+  restore_cursor(prev_key)
   M.highlight_active()
 end
 
 -- Update the title of the currently open note in-memory from the buffer content
--- (without a disk read), then re-render only the notes column. Called on every
--- TextChanged/TextChangedI in the editor buffer so the list stays in sync while typing.
+-- (without a disk read), then re-render the tree. Called on every
+-- TextChanged/TextChangedI in the editor buffer so the tree stays in sync while typing.
 function M.update_live_title(buf, file)
   local lines = api.nvim_buf_get_lines(buf, 0, 50, false)
   local title, empty = EMPTY_TITLE, true
@@ -435,89 +499,63 @@ function M.update_live_title(buf, file)
     end
   end
   local st = state()
-  for _, tbl in ipairs({ st.notes_all, st.items }) do
-    for _, n in ipairs(tbl or {}) do
-      if n.file == file then
-        n.title = title
-        n.empty = empty
-      end
+  for _, n in ipairs(st.notes_all or {}) do
+    if n.file == file then
+      n.title = title
+      n.empty = empty
     end
   end
-  M.render_notes()
+  for _, it in ipairs(st.tree_items or {}) do
+    if it.type == 'note' and it.file == file then
+      it.title = title
+      it.empty = empty
+    end
+  end
+  M.render_tree()
   require('notes.ui').refresh_editor_statusline()
 end
 
 function M.populate()
   M.scan()
-  validate_folder()
-  M.build_folders()
-  M.filter()
-  M.render_folders()
-  M.render_notes()
+  prune_expanded()
+  M.build_tree()
+  M.render_tree()
 end
 
 M.refresh = M.populate
 
-local function selected_note()
-  local st = state()
-  if not (st.list_win and api.nvim_win_is_valid(st.list_win)) then
-    return nil
+-- `o` / `<CR>`: a folder toggles expand/collapse in place; a note focuses the editor.
+function M.toggle_expand()
+  local it = item_at_cursor()
+  if not it then
+    return
   end
-  local l = api.nvim_win_get_cursor(st.list_win)[1]
-  return (st.items or {})[l]
+  if it.type == 'folder' then
+    local st = state()
+    st.expanded_folders = st.expanded_folders or {}
+    if st.expanded_folders[it.path] then
+      st.expanded_folders[it.path] = nil
+    else
+      st.expanded_folders[it.path] = true
+    end
+    local key = folder_key(it.path)
+    M.build_tree()
+    M.render_tree()
+    cursor_to(key)
+  else
+    local st = state()
+    if st.edit_win and api.nvim_win_is_valid(st.edit_win) then
+      api.nvim_set_current_win(st.edit_win)
+    end
+  end
 end
 
-local function selected_folder()
-  local st = state()
-  if not (st.folders_win and api.nvim_win_is_valid(st.folders_win)) then
-    return nil
-  end
-  local l = api.nvim_win_get_cursor(st.folders_win)[1]
-  return (st.folders or {})[l]
-end
-
+-- CursorMoved auto-open: a note under the cursor opens in the editor.
 function M.open_selected()
-  local it = selected_note()
-  if it then
+  local it = item_at_cursor()
+  if it and it.type == 'note' then
     require('notes.ui').open_in_edit(it.file)
     M.highlight_active()
-  end
-end
-
--- Folder column cursor moved → switch the notes column to that folder.
-function M.select_folder()
-  local f = selected_folder()
-  if not f then
-    return
-  end
-  state().current_folder = f.folder
-  M.filter()
-  M.render_folders()
-  M.render_notes()
-end
-
--- `o` in the folders column: drill-down navigation. On the main row (row 1), go up
--- one level (no-op at the true root); on a child row, enter that folder.
-function M.change_folder()
-  local f = selected_folder()
-  if not f then
-    return
-  end
-  local st = state()
-  if f.is_main then
-    if st.main_folder == nil then
-      return
-    end
-    local parent = st.main_folder:match('^(.*)/[^/]+$')
-    st.main_folder = parent
-    st.current_folder = parent
-  else
-    st.main_folder = f.folder
-    st.current_folder = f.folder
-  end
-  M.populate()
-  if st.folders_win and api.nvim_win_is_valid(st.folders_win) then
-    api.nvim_win_set_cursor(st.folders_win, { 1, 0 })
   end
 end
 
@@ -536,19 +574,20 @@ local function new_id(target_dir)
   return name
 end
 
--- New note in the current folder (or root when "Notes" is selected). Opens it in the
--- editor but keeps focus in the notes column. Only one empty note may exist per folder:
--- an existing one is reopened instead.
+-- `a`: new note in the context folder (folder under cursor, or the folder of the
+-- note under cursor; root otherwise). Only one empty note may exist per folder: an
+-- existing one is reopened instead.
 function M.create_note()
   local dir = cfg().dir
-  local cf = state().current_folder
-  local folder = cf or ''
-  local target_dir = cf and (dir .. '/' .. cf) or dir
+  local folder = M.context_folder()
+  local target_dir = folder == '' and dir or (dir .. '/' .. folder)
 
   for _, n in ipairs(state().notes_all or {}) do
     if n.empty and n.folder == folder then
       require('notes.ui').open_in_edit(n.file)
+      expand(folder)
       M.populate()
+      cursor_to(note_key(n.file))
       return
     end
   end
@@ -556,17 +595,17 @@ function M.create_note()
   fn.mkdir(target_dir, 'p')
   local target = target_dir .. '/' .. new_id(target_dir)
   fn.writefile({}, target)
-  -- open first, then populate: render_notes puts the cursor on current_file, so the
-  -- new (empty, pinned-top) note becomes the one the cursor lands on
   require('notes.ui').open_in_edit(target)
+  expand(folder)
   M.populate()
+  cursor_to(note_key(target))
   sync()
 end
 
--- New folder is created as a child of the current drill-down level (main_folder).
--- A single leaf name is expected per call: '/' is rejected (deeper nesting is
--- reached by drilling in with `o` and creating again).
+-- `A`: new folder in the context folder. A single leaf name is expected: '/' and
+-- '\' are rejected (deeper nesting is reached by expanding and creating again).
 function M.create_folder()
+  local parent = M.context_folder()
   vim.ui.input({ prompt = 'New folder: ' }, function(input)
     if not input or input == '' then
       return
@@ -575,28 +614,111 @@ function M.create_folder()
       vim.notify('[notes.nvim] Folder name cannot contain "/" or "\\"', vim.log.levels.WARN)
       return
     end
-    local main = state().main_folder
-    local rel = main and (main .. '/' .. input) or input
+    local rel = parent == '' and input or (parent .. '/' .. input)
     local path = cfg().dir .. '/' .. rel
     fn.mkdir(path, 'p')
     -- .gitkeep lets an otherwise empty folder be committed and synced
     fn.writefile({}, path .. '/.gitkeep')
+    expand(parent)
     M.populate()
+    cursor_to(folder_key(rel))
     sync()
   end)
 end
 
--- Rename works on the main row (the folder currently drilled into) or a child row;
--- only the true root "Notes" (folder == nil) is rejected. The new name is a single
--- leaf; the folder's parent path is unchanged.
-function M.rename_folder()
-  local f = selected_folder()
-  if not f or f.folder == nil then
-    vim.notify('[notes.nvim] Select a folder to rename', vim.log.levels.WARN)
+function M.delete_note()
+  local it = item_at_cursor()
+  if not (it and it.type == 'note') then
+    return
+  end
+  if is_conflicted(it.file) then
+    notify_conflict_block()
     return
   end
 
-  local leaf = f.folder:match('[^/]+$')
+  local choice = fn.confirm('Delete "' .. it.title .. '"?', '&Yes\n&No', 2)
+  if choice ~= 1 then
+    return
+  end
+  if state().current_file == it.file then
+    require('notes.ui').show_placeholder()
+  end
+  fn.delete(it.file)
+  M.populate()
+  sync()
+end
+
+function M.delete_folder()
+  local it = item_at_cursor()
+  if not (it and it.type == 'folder') then
+    vim.notify('[notes.nvim] Select a folder to delete', vim.log.levels.WARN)
+    return
+  end
+  local f = it.path
+
+  if folder_has_conflict(f) then
+    notify_conflict_block()
+    return
+  end
+  local prompt = 'Delete folder "' .. f .. '" and all its notes?'
+  if fn.confirm(prompt, '&Yes\n&No', 2) ~= 1 then
+    return
+  end
+  local path = cfg().dir .. '/' .. f
+  local st = state()
+  local cur = st.current_file
+  if cur and (cur == path or cur:sub(1, #path + 1) == path .. '/') then
+    require('notes.ui').show_placeholder()
+  end
+  fn.delete(path, 'rf')
+
+  -- drop the deleted folder (and any of its descendants) from expanded_folders
+  if st.expanded_folders then
+    st.expanded_folders[f] = nil
+    for p in pairs(st.expanded_folders) do
+      if p:sub(1, #f + 1) == f .. '/' then
+        st.expanded_folders[p] = nil
+      end
+    end
+  end
+
+  -- a marked note/folder may have been inside the deleted subtree — clear the
+  -- pending cut so paste doesn't try to move a now-nonexistent path
+  if st.cut and (st.cut == path or st.cut:sub(1, #path + 1) == path .. '/') then
+    st.cut = nil
+  end
+  if st.cut_folder and (st.cut_folder == f or st.cut_folder:sub(1, #f + 1) == f .. '/') then
+    st.cut_folder = nil
+  end
+
+  M.populate()
+  sync()
+end
+
+-- `d`: dispatch by row type.
+function M.delete()
+  local it = item_at_cursor()
+  if not it then
+    return
+  end
+  if it.type == 'note' then
+    M.delete_note()
+  else
+    M.delete_folder()
+  end
+end
+
+-- `r`: rename the folder under the cursor. Only a single leaf changes; the
+-- folder's parent path stays put.
+function M.rename_folder()
+  local it = item_at_cursor()
+  if not (it and it.type == 'folder') then
+    vim.notify('[notes.nvim] Select a folder to rename', vim.log.levels.WARN)
+    return
+  end
+  local f = it.path
+
+  local leaf = f:match('[^/]+$')
   vim.ui.input({ prompt = 'Rename folder: ', default = leaf }, function(input)
     if not input or input == '' or input == leaf then
       return
@@ -605,14 +727,14 @@ function M.rename_folder()
       vim.notify('[notes.nvim] Folder name cannot contain "/" or "\\"', vim.log.levels.WARN)
       return
     end
-    if folder_has_conflict(f.folder) then
+    if folder_has_conflict(f) then
       notify_conflict_block()
       return
     end
     local dir = cfg().dir
-    local parent = f.folder:match('^(.*)/[^/]+$')
+    local parent = f:match('^(.*)/[^/]+$')
     local newrel = parent and (parent .. '/' .. input) or input
-    local oldp = dir .. '/' .. f.folder
+    local oldp = dir .. '/' .. f
     local newp = dir .. '/' .. newrel
     local st = state()
     local cur = st.current_file
@@ -642,302 +764,92 @@ function M.rename_folder()
       end
     end
 
-    -- current_folder/main_folder may point at the renamed folder itself or at one
-    -- of its descendants (we could be drilled several levels below it); rewrite
-    -- the f.folder prefix to newrel in both so navigation stays consistent
-    local function rewrite_prefix(path)
-      if path == nil then
-        return nil
+    -- rewrite expanded_folders keys: the renamed folder itself and any descendants
+    -- move from the old prefix to the new one
+    if st.expanded_folders then
+      local rewritten = {}
+      for path, v in pairs(st.expanded_folders) do
+        if path == f then
+          rewritten[newrel] = v
+        elseif path:sub(1, #f + 1) == f .. '/' then
+          rewritten[newrel .. path:sub(#f + 1)] = v
+        else
+          rewritten[path] = v
+        end
       end
-      if path == f.folder then
-        return newrel
-      end
-      if path:sub(1, #f.folder + 1) == f.folder .. '/' then
-        return newrel .. path:sub(#f.folder + 1)
-      end
-      return path
+      st.expanded_folders = rewritten
     end
-    st.current_folder = rewrite_prefix(st.current_folder)
-    st.main_folder = rewrite_prefix(st.main_folder)
 
     -- a marked note/folder may live inside the renamed folder too — keep the
     -- pending cut pointed at a path that still exists on disk
     if st.cut and (st.cut == oldp or st.cut:sub(1, #oldp + 1) == oldp .. '/') then
       st.cut = newp .. st.cut:sub(#oldp + 1)
     end
-    st.cut_folder = rewrite_prefix(st.cut_folder)
+    if st.cut_folder then
+      if st.cut_folder == f then
+        st.cut_folder = newrel
+      elseif st.cut_folder:sub(1, #f + 1) == f .. '/' then
+        st.cut_folder = newrel .. st.cut_folder:sub(#f + 1)
+      end
+    end
 
     M.populate()
+    cursor_to(folder_key(newrel))
     sync()
   end)
 end
 
-function M.delete_note()
-  local it = selected_note()
+-- `x`: mark the note or folder under the cursor for moving. A note and a folder
+-- can't be marked at the same time; a second `x` on the already-marked item
+-- cancels the move. Only the highlight needs to change here (the tree's shape is
+-- unaffected), so a lightweight render_tree() is enough — no rescan.
+function M.cut()
+  local it = item_at_cursor()
   if not it then
     return
   end
-  if is_conflicted(it.file) then
-    notify_conflict_block()
-    return
-  end
 
-  local choice = fn.confirm('Delete "' .. it.title .. '"?', '&Yes\n&No', 2)
-  if choice ~= 1 then
-    return
-  end
-  if state().current_file == it.file then
-    require('notes.ui').show_placeholder()
-  end
-  fn.delete(it.file)
-  M.populate()
-  sync()
-end
-
-function M.delete_folder()
-  local f = selected_folder()
-  if not f or f.folder == nil then
-    vim.notify('[notes.nvim] Select a folder to delete', vim.log.levels.WARN)
-    return
-  end
-
-  if folder_has_conflict(f.folder) then
-    notify_conflict_block()
-    return
-  end
-  local prompt = 'Delete folder "' .. f.folder .. '" and all its notes?'
-  if fn.confirm(prompt, '&Yes\n&No', 2) ~= 1 then
-    return
-  end
-  local path = cfg().dir .. '/' .. f.folder
   local st = state()
-  local cur = st.current_file
-  if cur and (cur == path or cur:sub(1, #path + 1) == path .. '/') then
-    require('notes.ui').show_placeholder()
-  end
-  fn.delete(path, 'rf')
-
-  local function inside_deleted(p)
-    return p ~= nil and (p == f.folder or p:sub(1, #f.folder + 1) == f.folder .. '/')
-  end
-  if inside_deleted(st.main_folder) then
-    -- the drilled-into level itself (or an ancestor of it) was deleted → go up to
-    -- its parent, which still exists
-    st.main_folder = f.folder:match('^(.*)/[^/]+$')
-    st.current_folder = st.main_folder
-  elseif inside_deleted(st.current_folder) then
-    st.current_folder = st.main_folder
-  end
-
-  -- a marked note/folder may have been inside the deleted subtree — clear the
-  -- pending cut so paste doesn't try to move a now-nonexistent path
-  if st.cut and (st.cut == path or st.cut:sub(1, #path + 1) == path .. '/') then
-    st.cut = nil
-  end
-  if inside_deleted(st.cut_folder) then
-    st.cut_folder = nil
-  end
-
-  M.populate()
-  sync()
-end
-
--- Mark the selected note for moving; focus stays in the notes column.
-function M.cut_note()
-  local it = selected_note()
-  if not it then
-    return
-  end
-  if is_conflicted(it.file) then
-    notify_conflict_block()
-    return
-  end
-  local st = state()
-  -- второе нажатие x на уже помеченной заметке отменяет перемещение
-  -- (без idiom `and/or`: nil ложно и сломал бы ветку отмены)
-  local cancel = st.cut == it.file
-  local had_cut_folder = st.cut_folder ~= nil
-  if cancel then
-    st.cut = nil
-  else
-    st.cut = it.file
-    st.cut_folder = nil -- a note and a folder can't be marked for moving at the same time
-  end
-
-  -- render_notes сбрасывает курсор на строку 1; при пометке список не меняется,
-  -- поэтому сохраняем позицию и возвращаем её, чтобы остаться на выделенной заметке
-  local pos = (st.list_win and api.nvim_win_is_valid(st.list_win))
-      and api.nvim_win_get_cursor(st.list_win)
-    or nil
-  M.render_notes()
-  if pos then
-    pcall(api.nvim_win_set_cursor, st.list_win, pos)
-  end
-  if had_cut_folder then
-    -- a previously marked folder just got cleared above; without this the
-    -- folders column would keep showing its stale NotesCut highlight
-    M.render_folders()
-  end
-
-  vim.notify(
-    cancel and '[notes.nvim] Move cancelled'
-      or ('[notes.nvim] Navigate to a folder and press ' .. cfg().keys.paste)
-  )
-end
-
--- Mark the selected folder for moving. Only a child row can be marked — the main
--- row (the folder currently drilled into, or the true root) cannot be moved from
--- inside itself. The user then navigates within the folders column (drill in/out,
--- move the cursor) to the destination and presses `paste`.
-function M.cut_folder()
-  local f = selected_folder()
-  if not f or f.is_main then
-    vim.notify('[notes.nvim] Cannot move the current folder from inside it', vim.log.levels.WARN)
-    return
-  end
-  if folder_has_conflict(f.folder) then
-    notify_conflict_block()
-    return
-  end
-  local st = state()
-  -- second press on the already-marked folder cancels the move
-  local cancel = st.cut_folder == f.folder
-  local had_cut = st.cut ~= nil
-  if cancel then
-    st.cut_folder = nil
-  else
-    st.cut_folder = f.folder
-    st.cut = nil -- a note and a folder can't be marked for moving at the same time
-  end
-
-  local pos = (st.folders_win and api.nvim_win_is_valid(st.folders_win))
-      and api.nvim_win_get_cursor(st.folders_win)
-    or nil
-  M.render_folders()
-  if pos then
-    pcall(api.nvim_win_set_cursor, st.folders_win, pos)
-  end
-  if had_cut then
-    -- a previously marked note just got cleared above; without this the notes
-    -- column would keep showing its stale NotesCut highlight
-    M.render_notes()
-  end
-
-  vim.notify(
-    cancel and '[notes.nvim] Move cancelled'
-      or ('[notes.nvim] Navigate to the destination folder and press ' .. cfg().keys.paste)
-  )
-end
-
--- p in the folders column: drop the marked folder into the selected folder (or
--- root). Blocked if the marked folder holds a conflict, or if the destination is
--- the folder itself or one of its own descendants (can't nest a folder in itself).
-function M.paste_folder()
-  local st = state()
-  local src = st.cut_folder
-  if not src then
-    return
-  end
-  if folder_has_conflict(src) then
-    notify_conflict_block()
-    return
-  end
-
-  local f = selected_folder()
-  if not f then
-    return
-  end
-  local dest = f.folder -- nil = root
-  local into_self = dest ~= nil and (dest == src or dest:sub(1, #src + 1) == src .. '/')
-  if into_self then
-    vim.notify('[notes.nvim] Cannot move a folder into itself', vim.log.levels.WARN)
-    return
-  end
-
-  local dir = cfg().dir
-  local leaf = src:match('[^/]+$')
-  local newrel = dest and (dest .. '/' .. leaf) or leaf
-  st.cut_folder = nil
-
-  if newrel == src then
-    M.render_folders()
-    return
-  end
-
-  local oldp = dir .. '/' .. src
-  local newp = dir .. '/' .. newrel
-  if fn.isdirectory(newp) == 1 then
+  if it.type == 'note' then
+    if is_conflicted(it.file) then
+      notify_conflict_block()
+      return
+    end
+    local cancel = st.cut == it.file
+    if cancel then
+      st.cut = nil
+    else
+      st.cut = it.file
+      st.cut_folder = nil -- a note and a folder can't be marked at the same time
+    end
+    M.render_tree()
     vim.notify(
-      '[notes.nvim] A folder named "' .. leaf .. '" already exists there',
-      vim.log.levels.WARN
+      cancel and '[notes.nvim] Move cancelled'
+        or ('[notes.nvim] Navigate to a folder and press ' .. cfg().keys.paste)
     )
-    return
-  end
-
-  local cur = st.current_file
-  local inside = cur and cur:sub(1, #oldp + 1) == oldp .. '/'
-
-  -- persist unsaved edits before the rename so they survive the directory move
-  if
-    inside
-    and st.edit_buf
-    and api.nvim_buf_is_valid(st.edit_buf)
-    and vim.bo[st.edit_buf].buftype == ''
-    and vim.bo[st.edit_buf].modified
-  then
-    api.nvim_buf_call(st.edit_buf, function()
-      vim.cmd('silent write')
-    end)
-  end
-
-  fn.rename(oldp, newp)
-
-  -- fn.rename preserves mtime; bump it so the destination floats to the top of
-  -- the folders column (folder recency = the newest mtime in its subtree)
-  local now = os.time()
-  vim.uv.fs_utime(newp, now, now)
-
-  if inside then
-    local old_buf = st.edit_buf
-    require('notes.ui').open_in_edit(newp .. cur:sub(#oldp + 1))
-    if old_buf and old_buf ~= st.edit_buf and api.nvim_buf_is_valid(old_buf) then
-      pcall(api.nvim_buf_delete, old_buf, { force = true })
+  else
+    if folder_has_conflict(it.path) then
+      notify_conflict_block()
+      return
     end
-  end
-
-  -- drill into the destination so its children (including the moved folder) show
-  st.main_folder = dest
-  st.current_folder = dest
-  M.populate()
-
-  if st.folders_win and api.nvim_win_is_valid(st.folders_win) then
-    for i, folder in ipairs(st.folders or {}) do
-      if folder.folder == newrel then
-        api.nvim_win_set_cursor(st.folders_win, { i, 0 })
-        break
-      end
+    local cancel = st.cut_folder == it.path
+    if cancel then
+      st.cut_folder = nil
+    else
+      st.cut_folder = it.path
+      st.cut = nil
     end
-  end
-
-  sync()
-end
-
--- <CR> in the folders column: focus the notes column.
-function M.folder_enter()
-  local st = state()
-  if st.list_win and api.nvim_win_is_valid(st.list_win) then
-    api.nvim_set_current_win(st.list_win)
+    M.render_tree()
+    vim.notify(
+      cancel and '[notes.nvim] Move cancelled'
+        or ('[notes.nvim] Navigate to the destination folder and press ' .. cfg().keys.paste)
+    )
   end
 end
 
--- p in the folders column: drop the marked note into the selected folder, or (if
--- a folder is marked instead) dispatch to paste_folder.
+-- Drop the marked note into the context folder.
 function M.paste_note()
   local st = state()
-  if st.cut_folder then
-    M.paste_folder()
-    return
-  end
   if not st.cut then
     return
   end
@@ -946,18 +858,15 @@ function M.paste_note()
     return
   end
 
-  local f = selected_folder()
-  if not f then
-    return
-  end
+  local folder = M.context_folder()
   local dir = cfg().dir
-  local target_dir = f.folder and (dir .. '/' .. f.folder) or dir
+  local target_dir = folder == '' and dir or (dir .. '/' .. folder)
   local src = st.cut
   local target = target_dir .. '/' .. fn.fnamemodify(src, ':t')
   st.cut = nil
 
   if src == target then
-    M.render_notes()
+    M.render_tree()
     return
   end
 
@@ -995,54 +904,117 @@ function M.paste_note()
     end
   end
 
-  -- выбрать папку-приёмник: её заметки заполняют колонку Notes, сама папка
-  -- подсвечивается активной, а с обновлённым mtime стоит первой среди реальных папок
-  st.current_folder = f.folder
+  expand(folder)
   M.populate()
-
-  if st.folders_win and api.nvim_win_is_valid(st.folders_win) then
-    for i, folder in ipairs(st.folders or {}) do
-      if folder.folder == f.folder then
-        api.nvim_win_set_cursor(st.folders_win, { i, 0 })
-        break
-      end
-    end
-  end
-
+  cursor_to(note_key(target))
   sync()
 end
 
-function M.attach_folders(buf)
-  local keys = cfg().keys
-  local function map(lhs, rhs, desc)
-    vim.keymap.set('n', lhs, rhs, { buffer = buf, nowait = true, silent = true, desc = desc })
+-- Drop the marked folder into the context folder (or root). Blocked if the marked
+-- folder holds a conflict, or if the destination is the folder itself or one of
+-- its own descendants (can't nest a folder in itself).
+function M.paste_folder()
+  local st = state()
+  local src = st.cut_folder
+  if not src then
+    return
+  end
+  if folder_has_conflict(src) then
+    notify_conflict_block()
+    return
   end
 
-  map('h', '<Nop>', 'Notes: no horizontal move')
-  map('l', '<Nop>', 'Notes: no horizontal move')
-  map(keys.open_file, M.folder_enter, 'Notes: focus notes column')
-  map(keys.paste, M.paste_note, 'Notes: paste note into folder')
-  map(keys.move, M.cut_folder, 'Notes: mark folder for moving')
-  map(keys.create, M.create_folder, 'Notes: create folder')
-  map(keys.rename, M.rename_folder, 'Notes: rename folder')
-  map(keys.delete, M.delete_folder, 'Notes: delete folder')
-  map(keys.change_folder, M.change_folder, 'Notes: enter/up folder')
-  map(keys.refresh, function()
-    M.refresh()
-    sync()
-  end, 'Notes: refresh and sync')
-  map(keys.open_github, function()
-    require('notes.git').open_github()
-  end, 'Notes: open GitHub')
-  map(keys.toggle_panels, function()
-    require('notes.ui').toggle_panels()
-  end, 'Notes: toggle panels')
-  map(keys.close, function()
-    require('notes').close_interactive()
-  end, 'Notes: close')
+  local dest = M.context_folder()
+  local into_self = dest == src or dest:sub(1, #src + 1) == src .. '/'
+  if into_self then
+    vim.notify('[notes.nvim] Cannot move a folder into itself', vim.log.levels.WARN)
+    return
+  end
+
+  local dir = cfg().dir
+  local leaf = src:match('[^/]+$')
+  local newrel = dest == '' and leaf or (dest .. '/' .. leaf)
+  st.cut_folder = nil
+
+  if newrel == src then
+    M.render_tree()
+    return
+  end
+
+  local oldp = dir .. '/' .. src
+  local newp = dir .. '/' .. newrel
+  if fn.isdirectory(newp) == 1 then
+    vim.notify(
+      '[notes.nvim] A folder named "' .. leaf .. '" already exists there',
+      vim.log.levels.WARN
+    )
+    return
+  end
+
+  local cur = st.current_file
+  local inside = cur and cur:sub(1, #oldp + 1) == oldp .. '/'
+
+  -- persist unsaved edits before the rename so they survive the directory move
+  if
+    inside
+    and st.edit_buf
+    and api.nvim_buf_is_valid(st.edit_buf)
+    and vim.bo[st.edit_buf].buftype == ''
+    and vim.bo[st.edit_buf].modified
+  then
+    api.nvim_buf_call(st.edit_buf, function()
+      vim.cmd('silent write')
+    end)
+  end
+
+  fn.rename(oldp, newp)
+
+  -- fn.rename preserves mtime; bump it so the destination floats to the top of
+  -- the tree (folder recency = the newest mtime in its subtree)
+  local now = os.time()
+  vim.uv.fs_utime(newp, now, now)
+
+  if inside then
+    local old_buf = st.edit_buf
+    require('notes.ui').open_in_edit(newp .. cur:sub(#oldp + 1))
+    if old_buf and old_buf ~= st.edit_buf and api.nvim_buf_is_valid(old_buf) then
+      pcall(api.nvim_buf_delete, old_buf, { force = true })
+    end
+  end
+
+  -- rewrite expanded_folders: the moved folder itself and its descendants move
+  -- from the old prefix to the new one
+  if st.expanded_folders then
+    local rewritten = {}
+    for path, v in pairs(st.expanded_folders) do
+      if path == src then
+        rewritten[newrel] = v
+      elseif path:sub(1, #src + 1) == src .. '/' then
+        rewritten[newrel .. path:sub(#src + 1)] = v
+      else
+        rewritten[path] = v
+      end
+    end
+    st.expanded_folders = rewritten
+  end
+  expand(dest)
+
+  M.populate()
+  cursor_to(folder_key(newrel))
+  sync()
 end
 
-function M.attach_notes(buf)
+-- `p`: dispatch to paste_folder when a folder is marked, else paste_note.
+function M.paste()
+  local st = state()
+  if st.cut_folder then
+    M.paste_folder()
+  elseif st.cut then
+    M.paste_note()
+  end
+end
+
+function M.attach_explorer(buf)
   local keys = cfg().keys
   local function map(lhs, rhs, desc)
     vim.keymap.set('n', lhs, rhs, { buffer = buf, nowait = true, silent = true, desc = desc })
@@ -1050,31 +1022,30 @@ function M.attach_notes(buf)
 
   map('h', '<Nop>', 'Notes: no horizontal move')
   map('l', '<Nop>', 'Notes: no horizontal move')
-  map(keys.open_file, function()
-    local st = state()
-    if st.edit_win and api.nvim_win_is_valid(st.edit_win) then
-      api.nvim_set_current_win(st.edit_win)
-    end
-  end, 'Notes: focus editor')
+  map(keys.open_file, M.toggle_expand, 'Notes: expand/collapse folder, or focus editor')
+  map(keys.change_folder, M.toggle_expand, 'Notes: expand/collapse folder, or focus editor')
   map(keys.create, M.create_note, 'Notes: create note')
-  map(keys.delete, M.delete_note, 'Notes: delete note')
-  map(keys.move, M.cut_note, 'Notes: move note')
-  map(keys.refresh, function()
-    M.refresh()
-    sync()
-  end, 'Notes: refresh and sync')
-  map(keys.open_github, function()
-    require('notes.git').open_github()
-  end, 'Notes: open GitHub')
-  map(keys.toggle_panels, function()
-    require('notes.ui').toggle_panels()
-  end, 'Notes: toggle panels')
+  map(keys.create_folder, M.create_folder, 'Notes: create folder')
+  map(keys.delete, M.delete, 'Notes: delete note/folder')
+  map(keys.rename, M.rename_folder, 'Notes: rename folder')
+  map(keys.move, M.cut, 'Notes: mark note/folder for moving')
+  map(keys.paste, M.paste, 'Notes: paste marked note/folder')
   map(keys.scroll_down, function()
     require('notes.ui').scroll_edit(1)
   end, 'Notes: scroll editor down')
   map(keys.scroll_up, function()
     require('notes.ui').scroll_edit(-1)
   end, 'Notes: scroll editor up')
+  map(keys.refresh, function()
+    M.refresh()
+    sync()
+  end, 'Notes: refresh and sync')
+  map(keys.open_github, function()
+    require('notes.git').open_github()
+  end, 'Notes: open GitHub')
+  map(keys.toggle_panels, function()
+    require('notes.ui').toggle_panels()
+  end, 'Notes: toggle panels')
   map(keys.close, function()
     require('notes').close_interactive()
   end, 'Notes: close')
