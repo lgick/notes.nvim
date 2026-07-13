@@ -1529,6 +1529,184 @@ do
   notes.close()
 end
 
+-- ── rename_folder rewrites a marked note's absolute st.cut path ────────────────
+do
+  io.write('rename_folder rewrites st.cut\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'deep note' })
+
+  fresh_open(dir)
+  notes.state.current_folder = 'A/B'
+  picker.filter()
+  picker.render_notes()
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  local note = notes.state.items[1]
+  picker.cut_note()
+  check('note marked', notes.state.cut == note.file)
+
+  notes.state.main_folder = 'A/B'
+  picker.build_folders()
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- main row = A/B itself
+
+  local orig = vim.ui.input
+  vim.ui.input = function(_, cb) cb('Renamed') end
+  picker.rename_folder()
+  vim.ui.input = orig
+
+  local expected = dir .. '/A/Renamed/note'
+  check('st.cut rewritten to the new path', notes.state.cut == expected, notes.state.cut)
+  check('the rewritten path exists on disk', fn.filereadable(notes.state.cut) == 1)
+
+  notes.state.main_folder = nil
+  picker.build_folders()
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- main row = root
+  picker.paste_note()
+  check('paste after rename succeeds', fn.filereadable(dir .. '/note') == 1)
+
+  notes.close()
+end
+
+-- ── rename_folder rewrites a marked folder's st.cut_folder path ────────────────
+do
+  io.write('rename_folder rewrites st.cut_folder\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/C/note', { 'deep note' })
+
+  fresh_open(dir)
+  notes.state.main_folder = 'A/B'
+  notes.state.current_folder = 'A/B'
+  picker.build_folders()
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A/B/C' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.cut_folder()
+  check('C marked', notes.state.cut_folder == 'A/B/C')
+
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- main row = A/B itself
+  local orig = vim.ui.input
+  vim.ui.input = function(_, cb) cb('Renamed') end
+  picker.rename_folder()
+  vim.ui.input = orig
+
+  check(
+    'st.cut_folder prefix rewritten',
+    notes.state.cut_folder == 'A/Renamed/C',
+    notes.state.cut_folder
+  )
+
+  notes.close()
+end
+
+-- ── delete_folder clears a marked note's st.cut when it was inside the subtree ─
+do
+  io.write('delete_folder clears st.cut\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/note', { 'deep note' })
+  writefile(dir .. '/root note', { 'root note' })
+
+  fresh_open(dir)
+  notes.state.current_folder = 'A/B'
+  picker.filter()
+  picker.render_notes()
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.cut_note()
+  check('note marked', notes.state.cut ~= nil)
+
+  notes.state.main_folder = nil
+  picker.build_folders()
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  local orig = vim.fn.confirm
+  vim.fn.confirm = function() return 1 end
+  picker.delete_folder()
+  vim.fn.confirm = orig
+
+  check('A deleted from disk', fn.isdirectory(dir .. '/A') == 0)
+  check('st.cut cleared after ancestor deleted', notes.state.cut == nil)
+
+  -- paste must be a no-op (nothing marked), not an error
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == nil then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.paste_note()
+  check('paste after stale cut is a safe no-op', fn.filereadable(dir .. '/root note') == 1)
+
+  notes.close()
+end
+
+-- ── delete_folder clears a marked folder's st.cut_folder when inside the subtree ─
+do
+  io.write('delete_folder clears st.cut_folder\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/B/C/note', { 'deep note' })
+
+  fresh_open(dir)
+  notes.state.main_folder = 'A/B'
+  notes.state.current_folder = 'A/B'
+  picker.build_folders()
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A/B/C' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.cut_folder()
+  check('C marked', notes.state.cut_folder == 'A/B/C')
+
+  notes.state.main_folder = nil
+  picker.build_folders()
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  local orig = vim.fn.confirm
+  vim.fn.confirm = function() return 1 end
+  picker.delete_folder()
+  vim.fn.confirm = orig
+
+  check('A deleted from disk', fn.isdirectory(dir .. '/A') == 0)
+  check('st.cut_folder cleared after ancestor deleted', notes.state.cut_folder == nil)
+
+  notes.close()
+end
+
+-- ── folder names reject backslash too (Windows path separator) ─────────────────
+do
+  io.write('folder name rejects backslash\n')
+  local dir = tmpdir()
+
+  fresh_open(dir)
+  local orig = vim.ui.input
+  vim.ui.input = function(_, cb) cb('A\\B') end
+  picker.create_folder()
+  vim.ui.input = orig
+  check('create_folder rejects backslash', fn.isdirectory(dir .. '/A') == 0 and fn.isdirectory(dir .. '/A/B') == 0)
+
+  writefile(dir .. '/Existing/note', { 'a note' })
+  picker.populate()
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Existing' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  vim.ui.input = function(_, cb) cb('X\\Y') end
+  picker.rename_folder()
+  vim.ui.input = orig
+  check(
+    'rename_folder rejects backslash',
+    fn.isdirectory(dir .. '/Existing') == 1 and fn.isdirectory(dir .. '/X') == 0
+  )
+
+  notes.close()
+end
+
 io.write('\n')
 if failures > 0 then
   io.write(failures .. ' check(s) FAILED\n')

@@ -571,8 +571,8 @@ function M.create_folder()
     if not input or input == '' then
       return
     end
-    if input:find('/') then
-      vim.notify('[notes.nvim] Folder name cannot contain "/"', vim.log.levels.WARN)
+    if input:find('[/\\]') then
+      vim.notify('[notes.nvim] Folder name cannot contain "/" or "\\"', vim.log.levels.WARN)
       return
     end
     local main = state().main_folder
@@ -601,8 +601,8 @@ function M.rename_folder()
     if not input or input == '' or input == leaf then
       return
     end
-    if input:find('/') then
-      vim.notify('[notes.nvim] Folder name cannot contain "/"', vim.log.levels.WARN)
+    if input:find('[/\\]') then
+      vim.notify('[notes.nvim] Folder name cannot contain "/" or "\\"', vim.log.levels.WARN)
       return
     end
     if folder_has_conflict(f.folder) then
@@ -659,6 +659,13 @@ function M.rename_folder()
     end
     st.current_folder = rewrite_prefix(st.current_folder)
     st.main_folder = rewrite_prefix(st.main_folder)
+
+    -- a marked note/folder may live inside the renamed folder too — keep the
+    -- pending cut pointed at a path that still exists on disk
+    if st.cut and (st.cut == oldp or st.cut:sub(1, #oldp + 1) == oldp .. '/') then
+      st.cut = newp .. st.cut:sub(#oldp + 1)
+    end
+    st.cut_folder = rewrite_prefix(st.cut_folder)
 
     M.populate()
     sync()
@@ -720,6 +727,15 @@ function M.delete_folder()
     st.current_folder = st.main_folder
   elseif inside_deleted(st.current_folder) then
     st.current_folder = st.main_folder
+  end
+
+  -- a marked note/folder may have been inside the deleted subtree — clear the
+  -- pending cut so paste doesn't try to move a now-nonexistent path
+  if st.cut and (st.cut == path or st.cut:sub(1, #path + 1) == path .. '/') then
+    st.cut = nil
+  end
+  if inside_deleted(st.cut_folder) then
+    st.cut_folder = nil
   end
 
   M.populate()
