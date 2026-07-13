@@ -128,7 +128,10 @@ function M.close()
 
   require('notes.ui').close()
 
-  if M.config.repo ~= '' then
+  -- Пока стартовый pull ещё идёт (synced=false), его git-команды работают вне
+  -- мьютекса sync_on_exit — параллельный sync_on_exit тут вызвал бы коллизию
+  -- index.lock. Стартовая цепочка сама вызовет sync_on_exit() по завершении.
+  if M.state.synced and M.config.repo ~= '' then
     require('notes.git').sync_on_exit()
   end
 end
@@ -174,6 +177,14 @@ end
 
 function M.setup(opts)
   M.config = vim.tbl_deep_extend('force', M.config, opts or {})
+
+  -- Делаем путь абсолютным ДО нормализации: vim.fs.normalize не преобразует
+  -- относительный путь, а после :cd/автокоманды смены cwd относительный dir
+  -- начал бы указывать не туда. ':p' (без ':h') даёт абсолютный путь, а
+  -- vim.fs.normalize затем раскрывает ~/$VAR, срезает концевой '/' и '\'→'/'.
+  -- ':p:h' здесь нельзя: на ещё не созданном пути ':p' не добавит '/', и ':h'
+  -- срезал бы последний компонент вместо концевого слэша.
+  M.config.dir = vim.fs.normalize(vim.fn.fnamemodify(M.config.dir, ':p'))
 
   api.nvim_create_user_command('Notes', function()
     M.open()

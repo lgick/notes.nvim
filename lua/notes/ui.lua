@@ -231,8 +231,12 @@ function M.set_nav_keymaps(buf)
     -- leave insert first (editor may be in insert) so the prefix isn't typed
     if api.nvim_get_mode().mode:sub(1, 1) == 'i' then
       vim.cmd('stopinsert')
+      -- stopinsert only flags the mode change for the next event-loop tick;
+      -- schedule nav() so getcharstr() doesn't block while still visually in Insert
+      vim.schedule(nav)
+    else
+      nav()
     end
-    nav()
   end, { buffer = buf, silent = true, desc = 'Notes: window nav' })
 end
 
@@ -293,12 +297,13 @@ local function setup_autocmds(st)
       if st.closing then
         return
       end
+      -- refresh immediately: mtime and title are already on disk after :w. This is
+      -- purely local (reads disk, redraws) so it must not wait on the synced gate below.
+      require('notes.picker').refresh()
       -- skip push until initial restore/pull finishes: an early :w could commit a dirty tree
       if not st.synced then
         return
       end
-      -- refresh immediately: mtime and title are already on disk after :w
-      require('notes.picker').refresh()
       if cfg().repo ~= '' then
         require('notes.git').sync_on_exit()
       end

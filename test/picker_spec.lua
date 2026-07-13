@@ -98,6 +98,32 @@ do
   notes.close()
 end
 
+-- ── setup normalizes a trailing slash in config.dir ───────────────────────────
+do
+  io.write('setup normalizes trailing slash in dir\n')
+  local dir = tmpdir()
+  writefile(dir .. '/Work/n1', { 'trailing slash note' })
+
+  fresh_open(dir .. '/')
+
+  check('config.dir has no trailing slash', notes.config.dir:sub(-1) ~= '/', notes.config.dir)
+  check('root folder named "Notes"', notes.state.folders[1].name == 'Notes')
+  check('folders include "Work"', contains(folder_names(), 'Work'))
+  check(
+    'nested note scanned with correct folder',
+    (function()
+      for _, n in ipairs(notes.state.notes_all or {}) do
+        if n.title == 'trailing slash note' then
+          return n.folder == 'Work'
+        end
+      end
+      return false
+    end)()
+  )
+
+  notes.close()
+end
+
 -- ── root view is root-only; folder filter narrows ────────────────────────────
 do
   io.write('root view + folder filter\n')
