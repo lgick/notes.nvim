@@ -10,9 +10,9 @@ A lightweight Neovim plugin for managing notes in a dedicated tab — modelled o
 ```
 ──────────────┬──────────────────────────────────
  Folders      │ Notes                            ← statuslines
- Notes/        │ 26.06.2026 - Shopping list
- ├─ Work/      │ 25.06.2026 - Project idea
- └─ Personal/  │ 24.06.2026 - Report
+ Notes/           │ 26.06.2026 - Shopping list
+ ├─ Work[12]/     │ 25.06.2026 - Project idea
+ └─ Personal[3]/  │ 24.06.2026 - Report
 ──────────────┴──────────────────────────────────
  Notes/Shopping list                              ← statusline (folder/title)
  # Shopping list
@@ -27,8 +27,8 @@ Folders nest to any depth, shown drill-down one level at a time (`o` to enter / 
 ────────────────┬────────────────────────────────
  Folders        │ Notes
  Notes/Work/ .. │ 26.06.2026 - Sprint notes
- ├─ Projects/   │
- └─ Archive/    │
+ ├─ Projects[8]/│
+ └─ Archive[4]/ │
 ────────────────┴────────────────────────────────
 ```
 
@@ -36,7 +36,7 @@ Folders nest to any depth, shown drill-down one level at a time (`o` to enter / 
 
 - **Two-pane, macOS-Notes-style UI** — opens in a new full-screen tab: **folders** (left column) and **notes** (right column) on top, the editor on the bottom. Closing notes closes the tab.
 - **Title from content** — a note has no manual filename. Its title is the **first non-blank line** of its text; an empty note is titled **"New Note"** and is always pinned to the top of the list. On disk each note is an opaque ID file (`.md` extension, e.g. `20260627143000.md`), so editing a title never churns git history or collides. The notes column shows `dd.mm.yyyy - Title`, sorted by modification time (newest first). **The title in the list updates live as you type**, without saving.
-- **Nested folders, drill-down navigation** — the folders column shows one level at a time: row 1 is the current level (**"Notes"** at the root, or `Notes/<path>/ ..` once you've drilled in), followed by its immediate subfolders, sorted so the one whose subtree has the most recently edited note comes first. Press `o` on a subfolder to enter it and load its notes into the notes column, or `o` on row 1 to go back up. Moving the cursor alone does not reload the notes column — only entering a folder with `o` does; the folders column uses a native `cursorline` to show which row is under the cursor. New folders (`a`) are created inside the current level. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
+- **Nested folders, drill-down navigation** — the folders column shows one level at a time: row 1 is the current level (**"Notes"** at the root, or `Notes/<path>/ ..` once you've drilled in), followed by its immediate subfolders, sorted so the one whose subtree has the most recently edited note comes first. Each subfolder shows a `[N]` count next to its name — the total number of notes in it and all its nested subfolders. Press `o` on a subfolder to enter it and load its notes into the notes column, or `o` on row 1 to go back up. Moving the cursor alone does not reload the notes column — only entering a folder with `o` does; the folders column uses a native `cursorline` to show which row is under the cursor. New folders (`a`) are created inside the current level. Empty folders are supported via a hidden `.gitkeep` so they commit and sync.
 - **Move by cursor** — press `x` on a note (or a folder) to mark it (highlighted with the selection color); press `x` again on the same item to cancel. For a note, navigate to a folder in the folders column and press `p` to drop it there. For a folder, navigate within the folders column itself (drill in/out with `o`, move the cursor) to the destination and press `p`. The destination folder becomes the selected one and rises to the top of the folders column; for a moved folder, the column also drills into the destination so the moved folder shows up as one of its children. Only a subfolder (a child row) can be marked — the folder you're currently viewing (row 1, including the root "Notes") can't be moved from inside itself. A folder also can't be moved into itself or one of its own subfolders.
 - **Native editing** — the editor window behaves like a normal `markdown` file window (`number`, `cursorline`, `signcolumn`), so global `InsertEnter`/`InsertLeave` styling and statusline plugins work inside it.
 - **Instant UI updates** — the note list updates immediately on `:w` (sort order, title); git sync runs in the background.

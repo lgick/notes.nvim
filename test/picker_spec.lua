@@ -1038,6 +1038,44 @@ do
   notes.close()
 end
 
+-- ── recursive note count badge on child folder rows ────────────────────────────
+do
+  io.write('folder note count badge\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/n1', { 'a one' })
+  writefile(dir .. '/A/n2', { 'a two' })
+  writefile(dir .. '/A/B/n3', { 'a b three' })
+  writefile(dir .. '/A/empty', {}) -- empty note, must still count
+  fn.mkdir(dir .. '/C', 'p')
+  fn.writefile({}, dir .. '/C/.gitkeep') -- empty folder, no notes
+
+  fresh_open(dir)
+
+  local a_row, c_row
+  for _, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      a_row = f
+    elseif f.folder == 'C' then
+      c_row = f
+    end
+  end
+  check('A count is recursive incl. empty note', a_row and a_row.count == 4, a_row and a_row.count)
+  check('C (no notes) count is 0', c_row and c_row.count == 0, c_row and c_row.count)
+  check('main row has no count field', notes.state.folders[1].count == nil)
+
+  picker.render_folders()
+  local flines = api.nvim_buf_get_lines(notes.state.folders_buf, 0, -1, false)
+  local a_line
+  for _, l in ipairs(flines) do
+    if l:find('A%[') then
+      a_line = l
+    end
+  end
+  check('rendered child row shows "A[4]/"', a_line ~= nil and a_line:find('A%[4%]/') ~= nil, a_line)
+
+  notes.close()
+end
+
 -- ── deep path on the main row is truncated from the left, not the right ───────
 do
   io.write('main row left-truncation at narrow width\n')

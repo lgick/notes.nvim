@@ -146,21 +146,22 @@ end
 -- Freshness of `folder_rel` = the most recent mtime among all notes in it and its
 -- descendants (recursively); if none exist anywhere in the subtree, falls back to
 -- the directory's own mtime (≈ creation time), so a new empty folder sorts to the
--- top among its siblings.
+-- top among its siblings. Third return is the recursive note count for the same
+-- subtree (empty notes included), used by build_folders() for the "[N]" badge.
 local function folder_recursive_mtime(folder_rel)
   local max_mtime = 0
-  local has_note = false
+  local cnt = 0
   for _, n in ipairs(state().notes_all or {}) do
     if n.folder == folder_rel or n.folder:sub(1, #folder_rel + 1) == folder_rel .. '/' then
       max_mtime = math.max(max_mtime, n.mtime)
-      has_note = true
+      cnt = cnt + 1
     end
   end
-  if has_note then
-    return max_mtime, true
+  if cnt > 0 then
+    return max_mtime, true, cnt
   end
   local s = vim.uv.fs_stat(cfg().dir .. '/' .. folder_rel)
-  return s and s.mtime.sec or 0, false
+  return s and s.mtime.sec or 0, false, 0
 end
 
 -- Builds the visible drill-down level of the folders column from all_folders:
@@ -185,9 +186,9 @@ function M.build_folders()
     end
   end
 
-  local fm, has_note = {}, {}
+  local fm, has_note, count = {}, {}, {}
   for _, f in ipairs(children) do
-    fm[f], has_note[f] = folder_recursive_mtime(f)
+    fm[f], has_note[f], count[f] = folder_recursive_mtime(f)
   end
   table.sort(children, function(a, b)
     local ma, mb = fm[a] or 0, fm[b] or 0
@@ -202,7 +203,8 @@ function M.build_folders()
   end)
 
   for _, f in ipairs(children) do
-    folders[#folders + 1] = { name = f:match('[^/]+$'), folder = f, is_main = false }
+    folders[#folders + 1] =
+      { name = f:match('[^/]+$'), folder = f, is_main = false, count = count[f] }
   end
 
   state().folders = folders
@@ -274,9 +276,9 @@ function M.render_folders()
       line = f.folder and (ROOT_LABEL .. '/' .. f.folder .. '/ ..') or (ROOT_LABEL .. '/')
       line = fit_left(line, width)
     elseif i == n then
-      line = '└─ ' .. f.name .. '/'
+      line = '└─ ' .. f.name .. '[' .. f.count .. ']/'
     else
-      line = '├─ ' .. f.name .. '/'
+      line = '├─ ' .. f.name .. '[' .. f.count .. ']/'
     end
     lines[#lines + 1] = line
   end
