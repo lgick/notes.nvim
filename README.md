@@ -115,7 +115,6 @@ require('notes').setup({
 
   -- Keymaps (override individually; unset keys keep their defaults).
   keys = {
-    open_file   = '<CR>',  -- folders: focus the notes column; notes: focus the editor
     create      = 'a',     -- folders: create a folder; notes: create a note
     delete      = 'd',     -- folders: delete the folder; notes: delete the note (confirmation)
     rename      = 'r',     -- folders: rename the selected folder
@@ -164,11 +163,9 @@ All keys are configurable via `config.keys` (see above).
 | `r` | Rename the selected folder | folders |
 | `d` | Delete the selected folder (confirmation) | folders |
 | `o` | Enter the folder under cursor / go up from row 1 | folders |
-| `<CR>` | Focus the notes column | folders |
 | `x` | Mark the folder for moving (then navigate within Folders and press `p`) | folders |
 | `p` | Drop the marked note/folder into this folder | folders |
 | `j` / `k` | Move cursor + open note instantly | notes |
-| `<CR>` | Focus the editor window | notes |
 | `a` | Create a new note in the current folder (or root) | notes |
 | `d` | Delete the selected note (confirmation) | notes |
 | `x` | Mark the note for moving (then navigate to a folder and press `p`) | notes |

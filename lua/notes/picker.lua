@@ -455,6 +455,7 @@ function M.populate()
   M.filter()
   M.render_folders()
   M.render_notes()
+  require('notes.ui').refresh_editor_statusline()
 end
 
 M.refresh = M.populate
@@ -911,14 +912,6 @@ function M.paste_folder()
   sync()
 end
 
--- <CR> in the folders column: focus the notes column.
-function M.folder_enter()
-  local st = state()
-  if st.list_win and api.nvim_win_is_valid(st.list_win) then
-    api.nvim_set_current_win(st.list_win)
-  end
-end
-
 -- p in the folders column: drop the marked note into the selected folder, or (if
 -- a folder is marked instead) dispatch to paste_folder.
 function M.paste_note()
@@ -1005,7 +998,6 @@ function M.attach_folders(buf)
 
   map('h', '<Nop>', 'Notes: no horizontal move')
   map('l', '<Nop>', 'Notes: no horizontal move')
-  map(keys.open_file, M.folder_enter, 'Notes: focus notes column')
   map(keys.paste, M.paste_note, 'Notes: paste note into folder')
   map(keys.move, M.cut_folder, 'Notes: mark folder for moving')
   map(keys.create, M.create_folder, 'Notes: create folder')
@@ -1035,12 +1027,6 @@ function M.attach_notes(buf)
 
   map('h', '<Nop>', 'Notes: no horizontal move')
   map('l', '<Nop>', 'Notes: no horizontal move')
-  map(keys.open_file, function()
-    local st = state()
-    if st.edit_win and api.nvim_win_is_valid(st.edit_win) then
-      api.nvim_set_current_win(st.edit_win)
-    end
-  end, 'Notes: focus editor')
   map(keys.create, M.create_note, 'Notes: create note')
   map(keys.delete, M.delete_note, 'Notes: delete note')
   map(keys.move, M.cut_note, 'Notes: move note')

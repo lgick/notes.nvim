@@ -124,6 +124,30 @@ do
   notes.close()
 end
 
+-- ── open_file key removed; change_folder ('o') untouched ─────────────────────
+do
+  io.write('open_file key removed from config\n')
+  local dir = tmpdir()
+  fresh_open(dir)
+
+  check('config.keys.open_file is gone', notes.config.keys.open_file == nil)
+  check('config.keys.change_folder is still "o"', notes.config.keys.change_folder == 'o')
+
+  local function has_cr_map(buf)
+    for _, m in ipairs(api.nvim_buf_get_keymap(buf, 'n')) do
+      if m.lhs == '<CR>' then
+        return true
+      end
+    end
+    return false
+  end
+
+  check('no <CR> keymap in folders_buf', not has_cr_map(notes.state.folders_buf))
+  check('no <CR> keymap in list_buf', not has_cr_map(notes.state.list_buf))
+
+  notes.close()
+end
+
 -- ── root view is root-only; folder filter narrows ────────────────────────────
 do
   io.write('root view + folder filter\n')
@@ -390,6 +414,38 @@ do
     #notes.state.items == 1 and notes.state.items[1].title == 'move me',
     table.concat(titles(), ',')
   )
+
+  notes.close()
+end
+
+-- ── move note: editor statusline shows the real title, not "New Note" ─────────
+do
+  io.write('move note updates editor statusline\n')
+  local dir = tmpdir()
+  writefile(dir .. '/movable', { 'move me statusline' })
+  fn.mkdir(dir .. '/Target', 'p')
+  fn.writefile({}, dir .. '/Target/.gitkeep')
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  local note = notes.state.items[1]
+  require('notes.ui').open_in_edit(note.file)
+  picker.cut_note()
+
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'Target' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.paste_note()
+
+  local statusline = vim.wo[notes.state.edit_win].statusline
+  check(
+    'statusline shows real title after move',
+    statusline:find('move me statusline', 1, true) ~= nil,
+    statusline
+  )
+  check('statusline does not fall back to New Note', not statusline:find('New Note', 1, true), statusline)
 
   notes.close()
 end

@@ -10,7 +10,6 @@ M.config = {
   list_height = 10, -- height of the folders/notes row (content rows)
   folders_width = 25, -- width of the folders column
   keys = {
-    open_file = '<CR>', -- folders: select folder / drop a moved note; notes: focus editor
     create = 'a', -- folders: create a folder; notes: create a note (in the current folder)
     delete = 'd', -- folders: delete the folder; notes: delete the note
     rename = 'r', -- folders: rename the selected folder
