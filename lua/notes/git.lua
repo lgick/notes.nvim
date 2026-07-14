@@ -105,7 +105,14 @@ end
 -- Refresh state.conflicts from git's unmerged-files list. Paths from git are
 -- relative to the repo root; we store absolute paths so they match note.file.
 -- -z avoids path quoting (needed for non-ASCII/spaces). cb receives the set.
+-- Any path newly entering the conflict set has its editor buffer force-reloaded
+-- (see ui.reload_if_open) if it's the currently open note — otherwise the user
+-- keeps seeing their pre-merge local content until they switch notes and back.
+-- Compared against the *previous* set so an already-conflicted note isn't
+-- reloaded again on every later sync (that would reset cursor/undo for no reason).
 local function update_conflicts(dir, cb)
+  local state = require('notes').state
+  local prev = state.conflicts
   git({ 'diff', '--name-only', '--diff-filter=U', '-z' }, dir, function(res)
     local set = {}
     if res.code == 0 and res.stdout then
@@ -113,7 +120,12 @@ local function update_conflicts(dir, cb)
         set[dir .. '/' .. rel] = true
       end
     end
-    require('notes').state.conflicts = next(set) and set or nil
+    state.conflicts = next(set) and set or nil
+    for path in pairs(set) do
+      if not (prev and prev[path]) then
+        require('notes.ui').reload_if_open(path)
+      end
+    end
     cb(set)
   end)
 end

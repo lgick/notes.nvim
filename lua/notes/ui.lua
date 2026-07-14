@@ -390,6 +390,28 @@ function M.refresh_editor_statusline()
   vim.wo[st.edit_win].statusline = ' ' .. editor_path_label(st.current_file) .. ' %m'
 end
 
+-- Force-reread `path` from disk if it's the note currently shown in the editor.
+-- Used when a background sync turns the open note into a merge conflict: without
+-- this the buffer keeps showing the pre-merge local content until the user
+-- switches notes and back (or runs :e! manually). Skipped when the buffer has
+-- unsaved edits, so an in-progress edit is never clobbered.
+function M.reload_if_open(path)
+  local st = require('notes').state
+  if st.current_file ~= path then
+    return
+  end
+  if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
+    return
+  end
+  local buf = api.nvim_win_get_buf(st.edit_win)
+  if vim.bo[buf].modified then
+    return
+  end
+  api.nvim_buf_call(buf, function()
+    vim.cmd('edit!')
+  end)
+end
+
 function M.open_in_edit(path)
   local st = require('notes').state
   if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then

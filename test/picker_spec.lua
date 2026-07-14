@@ -258,6 +258,41 @@ do
   notes.close()
 end
 
+-- ── ui.reload_if_open: open note is force-reread from disk on new conflict ──
+do
+  io.write('reload_if_open\n')
+  local dir = tmpdir()
+  local ui = require('notes.ui')
+  writefile(dir .. '/note1', { 'local content' })
+
+  fresh_open(dir)
+  local file
+  for _, n in ipairs(notes.state.notes_all) do
+    file = n.file
+  end
+  ui.open_in_edit(file)
+  check('buffer starts unmodified', not vim.bo[notes.state.edit_buf].modified)
+
+  -- simulate a git merge writing conflict markers into the working tree file
+  writefile(file, { '<<<<<<< HEAD', 'local content', '=======', 'remote content', '>>>>>>> origin' })
+  ui.reload_if_open(file)
+  local lines = api.nvim_buf_get_lines(notes.state.edit_buf, 0, -1, false)
+  check('reload_if_open pulls the merged content into the buffer',
+    lines[1] == '<<<<<<< HEAD' and lines[2] == 'local content' and lines[4] == 'remote content',
+    table.concat(lines, '|'))
+
+  -- guard: a buffer with unsaved edits must not be clobbered
+  api.nvim_buf_set_lines(notes.state.edit_buf, 0, 1, false, { 'user is mid-edit' })
+  vim.bo[notes.state.edit_buf].modified = true
+  writefile(file, { 'yet another remote change' })
+  ui.reload_if_open(file)
+  local lines2 = api.nvim_buf_get_lines(notes.state.edit_buf, 0, -1, false)
+  check('reload_if_open does not clobber unsaved edits', lines2[1] == 'user is mid-edit', lines2[1])
+  vim.bo[notes.state.edit_buf].modified = false -- discard so notes.close()/tabclose don't hit E37
+
+  notes.close()
+end
+
 -- ── conflicted notes/folders block destructive ops ───────────────────────────
 do
   io.write('block ops on conflict\n')
