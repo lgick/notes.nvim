@@ -843,6 +843,155 @@ do
   notes.close()
 end
 
+-- ── close_interactive: Save writes the buffer and closes ──────────────────────
+do
+  io.write('close_interactive Save writes and closes\n')
+  local dir = tmpdir()
+  writefile(dir .. '/note', { 'saved content' })
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.open_selected()
+  local buf = notes.state.edit_buf
+  api.nvim_buf_set_lines(buf, 0, -1, false, { 'edited then saved' })
+  check('buffer marked modified', vim.bo[buf].modified == true)
+
+  local orig_confirm = vim.fn.confirm
+  vim.fn.confirm = function() return 1 end -- Save
+  notes.close_interactive()
+  vim.fn.confirm = orig_confirm
+
+  check('notes closed after Save', not notes.is_open())
+  check(
+    'disk content updated',
+    table.concat(fn.readfile(dir .. '/note'), '') == 'edited then saved'
+  )
+end
+
+-- ── close_interactive: Cancel leaves notes open and the buffer untouched ──────
+do
+  io.write('close_interactive Cancel keeps notes open\n')
+  local dir = tmpdir()
+  writefile(dir .. '/note', { 'saved content' })
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.open_selected()
+  local buf = notes.state.edit_buf
+  api.nvim_buf_set_lines(buf, 0, -1, false, { 'unsaved edit' })
+
+  local orig_confirm = vim.fn.confirm
+  vim.fn.confirm = function() return 3 end -- Cancel
+  notes.close_interactive()
+  vim.fn.confirm = orig_confirm
+
+  check('notes still open after Cancel', notes.is_open())
+  check('buffer still modified (edit not discarded)', vim.bo[buf].modified == true)
+  check('disk content untouched', table.concat(fn.readfile(dir .. '/note'), '') == 'saved content')
+
+  vim.bo[buf].modified = false
+  notes.close()
+end
+
+-- ── paste_note no-op when the note is dropped into its current folder ─────────
+do
+  io.write('paste note into its own current folder is a no-op\n')
+  local dir = tmpdir()
+  writefile(dir .. '/root note', { 'root note' })
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.cut_note()
+  check('note marked', notes.state.cut ~= nil)
+
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- row 1 = Notes (root, its current folder)
+  picker.paste_note()
+
+  check('cut cleared', notes.state.cut == nil)
+  check('note stays at the same path', fn.filereadable(dir .. '/root note') == 1)
+
+  notes.close()
+end
+
+-- ── paste_folder no-op when dropped onto its own current parent ───────────────
+do
+  io.write('paste folder into its own current parent is a no-op\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/note', { 'a note' })
+
+  fresh_open(dir)
+  for i, f in ipairs(notes.state.folders) do
+    if f.folder == 'A' then
+      api.nvim_win_set_cursor(notes.state.folders_win, { i, 0 })
+    end
+  end
+  picker.cut_folder()
+  check('A marked', notes.state.cut_folder == 'A')
+
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- row 1 = Notes (root, A's current parent)
+  picker.paste_note() -- dispatches to paste_folder
+
+  check('cut_folder cleared', notes.state.cut_folder == nil)
+  check('folder stays at the same path', fn.isdirectory(dir .. '/A') == 1)
+  check('note stays with it', fn.filereadable(dir .. '/A/note') == 1)
+
+  notes.close()
+end
+
+-- ── notes.toggle(): open when closed, close_interactive when open ─────────────
+do
+  io.write('notes.toggle round-trip\n')
+  local dir = tmpdir()
+  writefile(dir .. '/n1', { 'note one' })
+
+  notes.state.synced = false
+  notes.state.tab = nil
+  notes.setup({ dir = dir, repo = '' })
+  check('starts closed', not notes.is_open())
+
+  notes.toggle()
+  check('toggle opens when closed', notes.is_open())
+
+  notes.toggle()
+  check('toggle closes when open (no unsaved changes, no prompt)', not notes.is_open())
+end
+
+-- ── notes.is_open(): self-heals after an external :tabclose ───────────────────
+do
+  io.write('is_open self-heals after external tabclose\n')
+  local dir = tmpdir()
+  writefile(dir .. '/n1', { 'note one' })
+
+  fresh_open(dir)
+  local tab = notes.state.tab
+  check('tab open before external close', api.nvim_tabpage_is_valid(tab))
+
+  -- emulate the user closing the tab directly (e.g. :tabclose), bypassing notes.close()
+  vim.cmd('tabclose ' .. api.nvim_tabpage_get_number(tab))
+
+  check('is_open reports false after external close', not notes.is_open())
+  check('state.tab wiped', notes.state.tab == nil)
+  check('state.folders_win wiped', notes.state.folders_win == nil)
+  check('state.list_win wiped', notes.state.list_win == nil)
+  check('state.edit_win wiped', notes.state.edit_win == nil)
+  check('state.current_file wiped', notes.state.current_file == nil)
+end
+
+-- ── setup(): partial config.keys override keeps unspecified defaults ──────────
+do
+  io.write('setup partial keys override keeps defaults\n')
+  local dir = tmpdir()
+
+  notes.state.synced = false
+  notes.state.tab = nil
+  notes.setup({ dir = dir, repo = '', keys = { create = 'c' } })
+
+  check('overridden key applied', notes.config.keys.create == 'c')
+  check('unspecified key keeps default (delete)', notes.config.keys.delete == 'd')
+  check('unspecified key keeps default (paste)', notes.config.keys.paste == 'p')
+  check('unspecified key keeps default (window_nav)', notes.config.keys.window_nav == '<C-w>')
+end
+
 -- ── revisiting a note does not stack duplicate live-title autocmds ────────────
 do
   io.write('live-title autocmd dedupe\n')

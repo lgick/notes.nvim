@@ -3,7 +3,7 @@
 -- All git-state assertions live in sync_spec.sh.
 --
 -- Run: nvim --headless -l test/sync_driver.lua <action>
---   action ∈ { sync, pull, restore }
+--   action ∈ { sync, pull, restore, ensure_repo }
 --   env NOTES_DIR     — the plugin's notes directory (clone "A")
 --   env NOTES_REMOTE  — remote URL (the bare repo)
 --
@@ -34,6 +34,10 @@ elseif action == 'pull' then
   end)
 elseif action == 'restore' then
   git.restore(function()
+    done = true
+  end)
+elseif action == 'ensure_repo' then
+  git.ensure_repo(function()
     done = true
   end)
 else

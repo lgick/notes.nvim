@@ -246,7 +246,32 @@ s10() {
   teardown
 }
 
-s1; s2; s2_guard; s3; s4; s5; s6; s7; s8; s9; s10
+# ── S11: ensure_repo clones a fresh dir when repo is configured ──────────────
+s11() {
+  echo 'S11: ensure_repo clones into a missing dir when repo is set'
+  setup
+  rm -rf "$A"   # simulate first-ever open: the plugin's dir does not exist yet
+  drive ensure_repo
+  check 'driver ok' 0 $?
+  check 'dir is now a git repo' 'yes' "$([ -d "$A/.git" ] && echo yes || echo no)"
+  check 'cloned file present' 'hello' "$(cat "$A/note.txt" 2>/dev/null)"
+  teardown
+}
+
+# ── S12: ensure_repo just mkdir's when repo == '' (no clone, no .git) ────────
+s12() {
+  echo "S12: ensure_repo with repo='' only creates the directory"
+  ROOT="$(mktemp -d)"
+  A="$ROOT/A"   # never created
+  REMOTE=''
+  drive ensure_repo
+  check 'driver ok' 0 $?
+  check 'dir created' 'yes' "$([ -d "$A" ] && echo yes || echo no)"
+  check 'not a git repo' 'no' "$([ -d "$A/.git" ] && echo yes || echo no)"
+  teardown
+}
+
+s1; s2; s2_guard; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12
 
 echo
 if [ "$fails" -gt 0 ]; then
