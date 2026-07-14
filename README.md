@@ -118,8 +118,8 @@ require('notes').setup({
     create      = 'a',     -- folders: create a folder; notes: create a note
     delete      = 'd',     -- folders: delete the folder; notes: delete the note (confirmation)
     rename      = 'r',     -- folders: rename the selected folder
-    move        = 'x',     -- notes: mark note for moving
-    paste       = 'p',     -- folders: drop the marked note into the selected folder
+    move        = 'x',     -- notes: mark note for moving; folders: mark folder for moving
+    paste       = 'p',     -- folders: drop the marked note/folder into the selected folder
     refresh     = 'R',     -- refresh the list
     open_github = 'O',     -- open the notes repository in the browser
     scroll_down = '<C-n>', -- notes: scroll the open note down
