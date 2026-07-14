@@ -486,6 +486,33 @@ function M.open_selected()
   end
 end
 
+-- `<CR>` in the folders column: on a child row, drill into it (same as `o`) and move
+-- focus to the notes column; on the main row, keep the level unchanged (unlike `o`,
+-- which goes up) and just move focus to the notes column.
+function M.select_folder()
+  local f = selected_folder()
+  if not f then
+    return
+  end
+  if not f.is_main then
+    M.change_folder()
+  end
+  local st = state()
+  if st.list_win and api.nvim_win_is_valid(st.list_win) then
+    api.nvim_set_current_win(st.list_win)
+  end
+end
+
+-- `<CR>` in the notes column: open the note under the cursor (if not already open)
+-- and move focus to the editor.
+function M.select_note()
+  M.open_selected()
+  local st = state()
+  if st.edit_win and api.nvim_win_is_valid(st.edit_win) then
+    api.nvim_set_current_win(st.edit_win)
+  end
+end
+
 -- `o` in the folders column: drill-down navigation. On the main row (row 1), go up
 -- one level (no-op at the true root); on a child row, enter that folder.
 function M.change_folder()
@@ -1004,6 +1031,7 @@ function M.attach_folders(buf)
   map(keys.rename, M.rename_folder, 'Notes: rename folder')
   map(keys.delete, M.delete_folder, 'Notes: delete folder')
   map(keys.change_folder, M.change_folder, 'Notes: enter/up folder')
+  map(keys.select, M.select_folder, 'Notes: enter folder / focus notes')
   map(keys.refresh, function()
     M.refresh()
     sync()
@@ -1030,6 +1058,7 @@ function M.attach_notes(buf)
   map(keys.create, M.create_note, 'Notes: create note')
   map(keys.delete, M.delete_note, 'Notes: delete note')
   map(keys.move, M.cut_note, 'Notes: move note')
+  map(keys.select, M.select_note, 'Notes: focus editor')
   map(keys.refresh, function()
     M.refresh()
     sync()

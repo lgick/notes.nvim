@@ -23,6 +23,7 @@ M.config = {
     window_nav = '<C-w>', -- prefix: h/j/k/l → move between windows (wincmd)
     toggle_panels = '<C-t>', -- hide/show Folders + Notes columns
     change_folder = 'o', -- folders: enter the folder under cursor / go up from the main row
+    select = '<CR>', -- folders: enter child folder / focus notes; notes: focus editor
   },
   -- Override sync status icons; nil = auto (Nerd Font glyph if nvim-web-devicons loaded, else Unicode)
   sync_icons = nil,

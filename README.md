@@ -128,6 +128,7 @@ require('notes').setup({
     window_nav    = '<C-w>', -- prefix; then h/j/k/l → move between windows
     toggle_panels = '<C-t>', -- hide/show Folders + Notes columns
     change_folder = 'o',     -- folders: enter the folder under cursor / go up from row 1
+    select        = '<CR>',  -- folders: enter child folder / focus notes; notes: focus editor
   },
 
   -- Sync status icons shown in the tab label next to 'notes.nvim'.
@@ -163,12 +164,14 @@ All keys are configurable via `config.keys` (see above).
 | `r` | Rename the selected folder | folders |
 | `d` | Delete the selected folder (confirmation) | folders |
 | `o` | Enter the folder under cursor / go up from row 1 | folders |
+| `<CR>` | Enter the folder under cursor (row 1 keeps its level) and focus the Notes column | folders |
 | `x` | Mark the folder for moving (then navigate within Folders and press `p`) | folders |
 | `p` | Drop the marked note/folder into this folder | folders |
 | `j` / `k` | Move cursor + open note instantly | notes |
 | `a` | Create a new note in the current folder (or root) | notes |
 | `d` | Delete the selected note (confirmation) | notes |
 | `x` | Mark the note for moving (then navigate to a folder and press `p`) | notes |
+| `<CR>` | Open the note under cursor and focus the editor | notes |
 | `<C-n>` / `<C-p>` | Scroll the open note down / up | notes |
 | `R` | Refresh the list | folders / notes |
 | `O` | Open the notes repository in the browser | folders / notes |

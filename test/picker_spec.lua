@@ -132,6 +132,7 @@ do
 
   check('config.keys.open_file is gone', notes.config.keys.open_file == nil)
   check('config.keys.change_folder is still "o"', notes.config.keys.change_folder == 'o')
+  check('config.keys.select default is <CR>', notes.config.keys.select == '<CR>')
 
   local function has_cr_map(buf)
     for _, m in ipairs(api.nvim_buf_get_keymap(buf, 'n')) do
@@ -142,8 +143,8 @@ do
     return false
   end
 
-  check('no <CR> keymap in folders_buf', not has_cr_map(notes.state.folders_buf))
-  check('no <CR> keymap in list_buf', not has_cr_map(notes.state.list_buf))
+  check('<CR> keymap present in folders_buf (select_folder)', has_cr_map(notes.state.folders_buf))
+  check('<CR> keymap present in list_buf (select_note)', has_cr_map(notes.state.list_buf))
 
   notes.close()
 end
@@ -1336,6 +1337,49 @@ do
 
   picker.change_folder() -- cursor already on row 1 (true root main row)
   check('no-op at true root', notes.state.main_folder == nil)
+
+  notes.close()
+end
+
+-- ── select_folder / select_note: `<CR>` forward navigation ────────────────────
+do
+  io.write('select_folder / select_note\n')
+  local dir = tmpdir()
+  writefile(dir .. '/A/note', { 'a note' })
+
+  fresh_open(dir)
+
+  -- child row → drill in AND move focus to the notes column
+  api.nvim_win_set_cursor(notes.state.folders_win, { 2, 0 }) -- A
+  picker.select_folder()
+  check(
+    'select_folder on child drilled into A',
+    notes.state.main_folder == 'A' and notes.state.current_folder == 'A'
+  )
+  check(
+    'select_folder on child moved focus to list_win',
+    api.nvim_get_current_win() == notes.state.list_win
+  )
+
+  -- main row → level unchanged, focus moves to notes column
+  api.nvim_set_current_win(notes.state.folders_win)
+  api.nvim_win_set_cursor(notes.state.folders_win, { 1, 0 }) -- main row = A
+  picker.select_folder()
+  check('select_folder on main row keeps level', notes.state.main_folder == 'A')
+  check(
+    'select_folder on main row moved focus to list_win',
+    api.nvim_get_current_win() == notes.state.list_win
+  )
+
+  -- notes column → open note under cursor and move focus to the editor
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  local it = notes.state.items[1]
+  picker.select_note()
+  check('select_note opened the note under cursor', notes.state.current_file == it.file)
+  check(
+    'select_note moved focus to edit_win',
+    api.nvim_get_current_win() == notes.state.edit_win
+  )
 
   notes.close()
 end
