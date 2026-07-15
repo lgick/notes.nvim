@@ -228,6 +228,7 @@ Each note is an ID-named `.md` file; its title in the list is read from the firs
 | Saving a file (`:w`) | UI refreshes instantly; then `git commit` → `git pull` (merge) → `git push` |
 | Create / delete / move / rename | Immediate `git commit` → `git pull` (merge) → `git push` |
 | Closing notes (`q`) | Optionally saves the open buffer, then `git commit` → `git pull` (merge) → `git push` |
+| Quitting Neovim (`:qa`, etc.) | A local `git commit` runs synchronously as a safety net, so a rapid delete followed by an immediate quit is never lost; the push (network) happens on the next open instead |
 
 ### Conflicts
 

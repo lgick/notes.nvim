@@ -269,6 +269,45 @@ function M.open_github()
   vim.ui.open(M.repo_url(repo))
 end
 
+-- Blocking, synchronous local commit — used on VimLeavePre so a pending
+-- deletion/edit is never lost when nvim tears down: vim.system child processes
+-- are killed on exit and vim.schedule callbacks don't run during teardown, so
+-- the normal async sync_on_exit() chain (network pull/push) cannot be trusted
+-- to finish. Push is deliberately skipped (it's network I/O, no reason to
+-- block exit on it) — any commit made here is pushed by the next session's
+-- post-pull sync_on_exit(). No-op while a merge is in progress: committing
+-- over unresolved markers would corrupt the index.
+function M.commit_now_blocking()
+  local c = cfg()
+  if c.repo == '' or not is_repo(c.dir) or merging(c.dir) then
+    return
+  end
+
+  local function run(args)
+    return vim.system(
+      vim.list_extend({ 'git' }, args),
+      { cwd = c.dir, text = true, env = { LC_ALL = 'C', LANG = 'C' } }
+    ):wait()
+  end
+
+  -- a concurrent async chain may briefly hold .git/index.lock; retry briefly
+  -- rather than silently drop the pending change
+  local add_res
+  for _ = 1, 40 do
+    add_res = run({ 'add', '-A' })
+    if add_res.code == 0 or not (add_res.stderr or ''):find('index.lock') then
+      break
+    end
+    vim.uv.sleep(25)
+  end
+  if not add_res or add_res.code ~= 0 then
+    return
+  end
+
+  -- "nothing to commit" is expected (nothing pending) and not an error
+  run({ 'commit', '-m', 'notes: ' .. os.date('%Y-%m-%d %H:%M') })
+end
+
 -- Serialise concurrent calls: if a sync is already running, set pending and
 -- re-run once it finishes. This prevents the push race that occurs when rapid
 -- CRUD operations each trigger sync_on_exit() before the first push completes.
@@ -289,6 +328,18 @@ function M.sync_on_exit()
   syncing = true
   require('notes.ui').set_sync_status('syncing')
 
+  -- Set only when `git pull` actually merged something (not "Already up to date."):
+  -- a full picker.refresh() (scan() over the whole notes dir) is only needed then.
+  -- A local commit of edits already on disk, or a merge whose file content the
+  -- user already saved, doesn't change what a rescan would see. Judged by a
+  -- non-empty stdout, not just the exit code: git writes merge/conflict activity
+  -- to stdout and still exits non-zero on a conflict, so gating on code == 0 alone
+  -- would wrongly skip the rescan when a conflicting pull also brought in a new
+  -- file from the remote. A network/fetch failure, on the other hand, exits
+  -- non-zero with an EMPTY stdout (the error goes to stderr) — that case must NOT
+  -- set tree_changed, since nothing from the remote could have landed on disk.
+  local tree_changed = false
+
   local function finish()
     syncing = false
     if sync_pending then
@@ -297,7 +348,15 @@ function M.sync_on_exit()
     else
       local notes = require('notes')
       if notes.is_open() then
-        require('notes.picker').refresh()
+        local picker = require('notes.picker')
+        if tree_changed then
+          picker.refresh()
+        else
+          -- cheap redraw only: reflects state.conflicts/state.cut changes without
+          -- re-walking the notes directory
+          picker.render_folders()
+          picker.render_notes()
+        end
         local st = notes.state
         require('notes.ui').set_sync_status(st.conflicts and 'conflict' or 'idle')
       end
@@ -358,6 +417,10 @@ function M.sync_on_exit()
       if rejected and not pushed_retry then
         pushed_retry = true
         git({ 'pull', '--no-rebase', '--no-edit' }, c.dir, function(pull_res)
+          local out = pull_res.stdout or ''
+          if out ~= '' and not out:find('Already up to date') then
+            tree_changed = true
+          end
           update_conflicts(c.dir, function(set)
             if next(set) or pull_res.code == 0 then
               do_resolve()
@@ -413,7 +476,11 @@ function M.sync_on_exit()
           do_push()
           return
         end
-        git({ 'pull', '--no-rebase', '--no-edit' }, c.dir, function()
+        git({ 'pull', '--no-rebase', '--no-edit' }, c.dir, function(pull_res)
+          local out = pull_res.stdout or ''
+          if out ~= '' and not out:find('Already up to date') then
+            tree_changed = true
+          end
           do_resolve()
         end)
       end)

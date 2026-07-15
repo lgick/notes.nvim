@@ -271,7 +271,95 @@ s12() {
   teardown
 }
 
-s1; s2; s2_guard; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12
+# ── S13: commit_now_blocking() commits a pending deletion synchronously ──────
+#         (VimLeavePre path) so restore() on the next open can't resurrect it.
+s13() {
+  echo 'S13: commit_now_blocking commits a deletion (VimLeavePre safety net)'
+  setup
+  rm "$A/a2.txt"   # plugin already deleted the file on disk, sync_on_exit not yet run
+  drive commit
+  check 'driver ok' 0 $?
+  check 'deletion committed' '' "$(git -C "$A" status --porcelain)"
+  check 'file gone from HEAD' '' "$(git -C "$A" show HEAD:a2.txt 2>/dev/null)"
+  # restore() must NOT resurrect it: the deletion is now committed, not "accidental"
+  drive restore
+  check 'driver ok (restore)' 0 $?
+  check 'still gone after restore' 'gone' "$([ -e "$A/a2.txt" ] && echo exists || echo gone)"
+  teardown
+}
+
+# ── S13-guard: commit_now_blocking must NOT commit over unresolved markers ───
+s13_guard() {
+  echo 'S13-guard: commit_now_blocking is a no-op while MERGING with markers'
+  setup
+  printf 'hello\nREMOTE\n' >"$B/note.txt"; gitq "$B" add -A; gitq "$B" commit -m r; gitq "$B" push
+  printf 'hello\nLOCAL\n' >"$A/note.txt"
+  drive pull                                  # creates the conflict, markers + MERGE_HEAD
+  check 'driver ok (pull)' 0 $?
+  check 'merge in progress' 'yes' "$(merging)"
+  drive commit
+  check 'driver ok (commit)' 0 $?
+  check 'still merging' 'yes' "$(merging)"
+  check 'markers still present' 'yes' "$(has_markers note.txt)"
+  teardown
+}
+
+# ── S14: sync_on_exit's finish() skips the full picker.scan() when the pull ──
+#         brought no changes (Already up to date) — only a cheap redraw runs.
+s14() {
+  echo 'S14: sync_on_exit with UI open skips scan() when pull brings no changes'
+  setup
+  local f="$ROOT/scancount"
+  NOTES_SCANCOUNT_FILE="$f" NOTES_DIR="$A" NOTES_REMOTE="$REMOTE" \
+    "$NVIM" --headless -l "$REPO_ROOT/test/sync_driver.lua" scan_count \
+    >/dev/null 2>"$ROOT/driver.err"
+  local rc=$?
+  check 'driver ok' 0 "$rc"
+  check 'no full scan when nothing changed' '0' "$(cat "$f" 2>/dev/null)"
+  teardown
+}
+
+# ── S14b: …but DOES scan() once when the pull actually merges in a change ────
+s14b() {
+  echo 'S14b: sync_on_exit with UI open scans once when pull brings a change'
+  setup
+  printf 'from B\n' >"$B/b.txt"; gitq "$B" add -A; gitq "$B" commit -m b; gitq "$B" push
+  local f="$ROOT/scancount"
+  NOTES_SCANCOUNT_FILE="$f" NOTES_DIR="$A" NOTES_REMOTE="$REMOTE" \
+    "$NVIM" --headless -l "$REPO_ROOT/test/sync_driver.lua" scan_count \
+    >/dev/null 2>"$ROOT/driver.err"
+  local rc=$?
+  check 'driver ok' 0 "$rc"
+  check 'full scan runs when pull changed files' '1' "$(cat "$f" 2>/dev/null)"
+  check 'pulled file present' 'from B' "$(cat "$A/b.txt" 2>/dev/null)"
+  teardown
+}
+
+# ── S14c: a CONFLICTING pull that also brings a new file still triggers a scan.
+#         Regression guard: gating tree_changed on `pull_res.code == 0` alone would
+#         wrongly skip the rescan here (a conflicting pull exits non-zero even though
+#         git wrote real merge activity, including the new file, to stdout).
+s14c() {
+  echo 'S14c: conflicting pull that also adds a file still triggers exactly one scan'
+  setup
+  printf 'hello\nREMOTE\n' >"$B/note.txt"
+  printf 'brand new\n' >"$B/newnote.txt"
+  gitq "$B" add -A; gitq "$B" commit -m 'remote conflict + new file'; gitq "$B" push
+  printf 'hello\nLOCAL\n' >"$A/note.txt"   # uncommitted local edit, same line → conflict
+  local f="$ROOT/scancount"
+  NOTES_SCANCOUNT_FILE="$f" NOTES_DIR="$A" NOTES_REMOTE="$REMOTE" \
+    "$NVIM" --headless -l "$REPO_ROOT/test/sync_driver.lua" scan_count \
+    >/dev/null 2>"$ROOT/driver.err"
+  local rc=$?
+  check 'driver ok' 0 "$rc"
+  check 'merge in progress' 'yes' "$(merging)"
+  check 'file has conflict markers' 'yes' "$(has_markers note.txt)"
+  check 'new file from remote landed on disk' 'brand new' "$(cat "$A/newnote.txt" 2>/dev/null)"
+  check 'exactly one scan ran (tree_changed correctly true)' '1' "$(cat "$f" 2>/dev/null)"
+  teardown
+}
+
+s1; s2; s2_guard; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12; s13; s13_guard; s14; s14b; s14c
 
 echo
 if [ "$fails" -gt 0 ]; then

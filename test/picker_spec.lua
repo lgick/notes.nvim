@@ -751,6 +751,41 @@ do
   notes.close()
 end
 
+-- ── update_live_title: unchanged title/empty skips render (typing the body) ────
+do
+  io.write('update_live_title skips render when title unchanged\n')
+  local dir = tmpdir()
+  writefile(dir .. '/note', { 'stable title', 'body' })
+
+  fresh_open(dir)
+  api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
+  picker.open_selected()
+
+  local buf = notes.state.edit_buf
+  local calls = 0
+  local orig = picker.render_notes
+  picker.render_notes = function(...)
+    calls = calls + 1
+    return orig(...)
+  end
+
+  -- edit only the body: first line (the title) stays the same
+  api.nvim_buf_set_lines(buf, 1, 2, false, { 'body changed' })
+  picker.update_live_title(buf, notes.state.current_file)
+  check('render_notes NOT called when title unchanged', calls == 0, tostring(calls))
+  check('title still stable', notes.state.items[1].title == 'stable title')
+
+  -- now actually change the title (first line)
+  api.nvim_buf_set_lines(buf, 0, 1, false, { 'new title' })
+  picker.update_live_title(buf, notes.state.current_file)
+  check('render_notes called when title changed', calls == 1, tostring(calls))
+  check('title updated', notes.state.items[1].title == 'new title', notes.state.items[1].title)
+
+  picker.render_notes = orig
+  vim.bo[buf].modified = false
+  notes.close()
+end
+
 -- ── create_note in a subfolder ────────────────────────────────────────────────
 do
   io.write('create note in subfolder\n')

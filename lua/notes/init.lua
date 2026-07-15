@@ -189,6 +189,20 @@ function M.setup(opts)
   api.nvim_create_user_command('Notes', function()
     M.open()
   end, { desc = 'Open notes' })
+
+  -- VimLeavePre is the only reliable "nvim is really exiting" signal: it fires
+  -- whether the notes tab is open or already closed, and unlike WinClosed's
+  -- vim.schedule(close()) or the async sync_on_exit() chain, it runs synchronously
+  -- before teardown kills any in-flight vim.system child process. A blocking local
+  -- commit here means a rapid delete-then-:qa can never be silently undone by the
+  -- next session's restore() resurrecting an uncommitted deletion.
+  api.nvim_create_augroup('NotesExit', { clear = true })
+  api.nvim_create_autocmd('VimLeavePre', {
+    group = 'NotesExit',
+    callback = function()
+      require('notes.git').commit_now_blocking()
+    end,
+  })
 end
 
 return M

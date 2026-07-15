@@ -425,6 +425,10 @@ end
 -- Update the title of the currently open note in-memory from the buffer content
 -- (without a disk read), then re-render only the notes column. Called on every
 -- TextChanged/TextChangedI in the editor buffer so the list stays in sync while typing.
+-- Skips the render/statusline update entirely when the computed title/empty flag
+-- didn't actually change (typing in the note body, below the first line) — most
+-- keystrokes fall in this case, and render_notes() rewrites the whole list buffer
+-- plus its extmarks, which is otherwise redone on every single keystroke.
 function M.update_live_title(buf, file)
   local lines = api.nvim_buf_get_lines(buf, 0, 50, false)
   local title, empty = EMPTY_TITLE, true
@@ -435,7 +439,19 @@ function M.update_live_title(buf, file)
       break
     end
   end
+
   local st = state()
+  local entry
+  for _, n in ipairs(st.notes_all or {}) do
+    if n.file == file then
+      entry = n
+      break
+    end
+  end
+  if entry and entry.title == title and entry.empty == empty then
+    return
+  end
+
   for _, tbl in ipairs({ st.notes_all, st.items }) do
     for _, n in ipairs(tbl or {}) do
       if n.file == file then
