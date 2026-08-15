@@ -12,13 +12,16 @@ local _old_tabline = nil
 -- Nerd Font glyphs are used when nvim-web-devicons is already loaded in the session
 -- (a reliable proxy for Nerd Fonts being present), otherwise plain Unicode fallback.
 local SYNC_ICONS = {
-  idle     = { plain = '\xe2\x9c\x93', nf = '\xef\x80\x8c' }, -- ✓ / nf-fa-check
+  idle = { plain = '\xe2\x9c\x93', nf = '\xef\x80\x8c' }, -- ✓ / nf-fa-check
   conflict = { plain = '!', nf = '\xee\xa9\xac' }, -- ! / nf-cod-warning
 }
 
-local SPIN_FRAMES = { '\xe2\xa0\x8b', '\xe2\xa0\x99', '\xe2\xa0\xb9', '\xe2\xa0\xb8',
-                      '\xe2\xa0\xbc', '\xe2\xa0\xb4', '\xe2\xa0\xa6', '\xe2\xa0\xa7',
-                      '\xe2\xa0\x87', '\xe2\xa0\x8f' } -- ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
+local SPIN_FRAMES = {
+  '\xe2\xa0\x96', -- ⠖
+  '\xe2\xa0\xb2', -- ⠲
+  '\xe2\xa0\xb4', -- ⠴
+  '\xe2\xa0\xa6', -- ⠦
+}
 
 local _sync_timer = nil
 local _sync_frame = 0
@@ -32,8 +35,7 @@ local function stop_spin()
 end
 
 local function has_nerd_fonts()
-  return package.loaded['nvim-web-devicons'] ~= nil
-    or pcall(require, 'nvim-web-devicons')
+  return package.loaded['nvim-web-devicons'] ~= nil or pcall(require, 'nvim-web-devicons')
 end
 
 function M.set_sync_status(status)
@@ -244,7 +246,6 @@ local function setup_panel_autocmds(st)
       require('notes.picker').open_selected()
     end,
   })
-
 end
 
 local function setup_autocmds(st)
@@ -385,8 +386,12 @@ end
 
 function M.refresh_editor_statusline()
   local st = require('notes').state
-  if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then return end
-  if not st.current_file then return end
+  if not (st.edit_win and api.nvim_win_is_valid(st.edit_win)) then
+    return
+  end
+  if not st.current_file then
+    return
+  end
   vim.wo[st.edit_win].statusline = ' ' .. editor_path_label(st.current_file) .. ' %m'
 end
 
