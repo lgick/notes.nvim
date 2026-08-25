@@ -1209,6 +1209,9 @@ do
 
   -- initial state: panels visible
   check('initial: panels_hidden false', notes.state.panels_hidden == false)
+  check('initial: folders_win winfixbuf', vim.wo[notes.state.folders_win].winfixbuf == true)
+  check('initial: list_win winfixbuf', vim.wo[notes.state.list_win].winfixbuf == true)
+  check('initial: edit_win winfixbuf', vim.wo[notes.state.edit_win].winfixbuf == true)
   check('initial: folders_win valid',
     notes.state.folders_win ~= nil and api.nvim_win_is_valid(notes.state.folders_win))
   check('initial: list_win valid',
@@ -1240,6 +1243,9 @@ do
   local flines = api.nvim_buf_get_lines(notes.state.folders_buf, 0, -1, false)
   check('shown: folders column populated', #flines > 0, tostring(#flines))
 
+  check('shown: folders_win winfixbuf', vim.wo[notes.state.folders_win].winfixbuf == true)
+  check('shown: list_win winfixbuf', vim.wo[notes.state.list_win].winfixbuf == true)
+
   -- CursorMoved still works: moving in the notes column opens the note
   api.nvim_set_current_win(notes.state.list_win)
   api.nvim_win_set_cursor(notes.state.list_win, { 1, 0 })
@@ -1267,6 +1273,46 @@ do
   local ok = pcall(notes.close)
   check('close does not error', ok)
   check('plugin closed', not notes.is_open())
+end
+
+-- ── winfixbuf: the plugin still swaps the editor buffer itself ────────────────
+do
+  io.write('winfixbuf editor swap\n')
+  local dir = tmpdir()
+  writefile(dir .. '/n1', { 'note one' })
+  writefile(dir .. '/n2', { 'note two' })
+
+  fresh_open(dir)
+  local ui = require('notes.ui')
+
+  local target = dir .. '/n2'
+  local ok = pcall(ui.open_in_edit, target)
+  check('open_in_edit works with winfixbuf', ok)
+  check('current_file is the opened note', notes.state.current_file == target,
+    tostring(notes.state.current_file))
+  check('edit_win shows the note buffer',
+    api.nvim_win_get_buf(notes.state.edit_win) == notes.state.edit_buf
+      and fn.resolve(api.nvim_buf_get_name(notes.state.edit_buf)) == fn.resolve(target),
+    api.nvim_buf_get_name(notes.state.edit_buf))
+  check('edit_win winfixbuf restored', vim.wo[notes.state.edit_win].winfixbuf == true)
+
+  -- switching to another note still works (winfixbuf is lifted per call)
+  ok = pcall(ui.open_in_edit, dir .. '/n1')
+  check('second open_in_edit works', ok and notes.state.current_file == dir .. '/n1')
+  check('edit_win winfixbuf still set', vim.wo[notes.state.edit_win].winfixbuf == true)
+
+  ok = pcall(ui.show_placeholder)
+  check('show_placeholder works with winfixbuf', ok and notes.state.current_file == nil)
+  check('placeholder keeps winfixbuf', vim.wo[notes.state.edit_win].winfixbuf == true)
+
+  -- an outside :bn cannot replace the folders column buffer
+  api.nvim_set_current_win(notes.state.folders_win)
+  local before = notes.state.folders_buf
+  pcall(vim.cmd, 'bnext')
+  check('folders buffer survives :bnext',
+    api.nvim_win_get_buf(notes.state.folders_win) == before)
+
+  notes.close()
 end
 
 -- ── recursive scan: notes at arbitrary depth get full relative folder path ────

@@ -133,6 +133,20 @@ local function setup_highlights()
   })
 end
 
+-- winfixbuf держит буфер окна от чужих :bn/:b, но плагин сам меняет буфер
+-- редактора (:edit / nvim_win_set_buf) — на время своей смены опция снимается.
+local function with_free_buf(win, fn)
+  local prev = vim.wo[win].winfixbuf
+  vim.wo[win].winfixbuf = false
+  local ok, err = pcall(fn)
+  if api.nvim_win_is_valid(win) then
+    vim.wo[win].winfixbuf = prev
+  end
+  if not ok then
+    error(err, 0)
+  end
+end
+
 -- Replace the editor with the placeholder scratch buffer (no file open).
 -- Used on first open and after the open file is deleted/its folder removed:
 -- the orphaned buffer must be wiped or checktime raises E211 ("no longer available").
@@ -150,7 +164,9 @@ function M.show_placeholder()
   api.nvim_buf_set_lines(buf, 0, -1, false, {
     'Select a note or create a new one (a).',
   })
-  api.nvim_win_set_buf(st.edit_win, buf)
+  with_free_buf(st.edit_win, function()
+    api.nvim_win_set_buf(st.edit_win, buf)
+  end)
   st.edit_buf = buf
   st.current_file = nil
 
@@ -165,6 +181,7 @@ function M.show_placeholder()
   vim.wo[st.edit_win].spell = false
   vim.wo[st.edit_win].conceallevel = 0
   vim.wo[st.edit_win].concealcursor = ''
+  vim.wo[st.edit_win].winfixbuf = true
 
   M.set_nav_keymaps(buf)
   vim.keymap.set('n', cfg().keys.close, function()
@@ -298,6 +315,9 @@ local function list_win_opts(win)
   vim.wo[win].signcolumn = 'no'
   vim.wo[win].statuscolumn = ''
   vim.wo[win].winfixheight = true
+  -- чужой :bn/:b (глобальный маппинг) не должен подменять буфер колонки:
+  -- буферы созданы с bufhidden=wipe, подмена уничтожила бы их безвозвратно
+  vim.wo[win].winfixbuf = true
 end
 
 function M.open()
@@ -436,8 +456,10 @@ function M.open_in_edit(path)
     end)
   end
 
-  api.nvim_win_call(st.edit_win, function()
-    vim.cmd('edit ' .. fn.fnameescape(path))
+  with_free_buf(st.edit_win, function()
+    api.nvim_win_call(st.edit_win, function()
+      vim.cmd('edit ' .. fn.fnameescape(path))
+    end)
   end)
 
   local buf = api.nvim_win_get_buf(st.edit_win)
@@ -457,6 +479,7 @@ function M.open_in_edit(path)
   vim.wo[st.edit_win].spell = false
   vim.wo[st.edit_win].conceallevel = 2
   vim.wo[st.edit_win].concealcursor = 'nc'
+  vim.wo[st.edit_win].winfixbuf = true
   -- %m shows [+] while the note has unsaved changes, nothing once written
   vim.wo[st.edit_win].statusline = ' ' .. editor_path_label(path) .. ' %m'
 
