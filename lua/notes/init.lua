@@ -8,7 +8,7 @@ M.config = {
   dir = vim.fn.expand('~/.notes'), -- local notes directory (git worktree)
   repo = '', -- SSH remote, e.g. 'git@github.com:user/notes.git'
   list_height = 10, -- height of the folders/notes row (content rows)
-  folders_width = 25, -- width of the folders column
+  folders_width = 30, -- width of the folders column
   keys = {
     create = 'a', -- folders: create a folder; notes: create a note (in the current folder)
     delete = 'd', -- folders: delete the folder; notes: delete the note
@@ -21,7 +21,7 @@ M.config = {
     scroll_up = '<C-p>', -- notes: scroll the open note up
     close = 'q', -- close notes (works from any notes window)
     window_nav = '<C-w>', -- prefix: h/j/k/l → move between windows (wincmd)
-    toggle_panels = '<C-t>', -- hide/show Folders + Notes columns
+    toggle_panels = 'f', -- hide/show Folders + Notes columns
     change_folder = 'o', -- folders: enter the folder under cursor / go up from the main row
     select = '<CR>', -- folders: enter child folder / focus notes; notes: focus editor
   },

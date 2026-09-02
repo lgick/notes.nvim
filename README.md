@@ -112,24 +112,24 @@ require('notes').setup({
   list_height = 10,
 
   -- Width of the folders column.
-  folders_width = 25,
+  folders_width = 30,
 
   -- Keymaps (override individually; unset keys keep their defaults).
   keys = {
-    create      = 'a',     -- folders: create a folder; notes: create a note
-    delete      = 'd',     -- folders: delete the folder; notes: delete the note (confirmation)
-    rename      = 'r',     -- folders: rename the selected folder
-    move        = 'x',     -- notes: mark note for moving; folders: mark folder for moving
-    paste       = 'p',     -- folders: drop the marked note/folder into the selected folder
-    refresh     = 'R',     -- refresh the list
-    open_github = 'O',     -- open the notes repository in the browser
+    create = 'a', -- folders: create a folder; notes: create a note
+    delete = 'd', -- folders: delete the folder; notes: delete the note (confirmation)
+    rename = 'r', -- folders: rename the selected folder
+    move = 'x', -- notes: mark note for moving; folders: mark folder for moving
+    paste = 'p', -- folders: drop the marked note/folder into the selected folder
+    refresh = 'R', -- refresh the list
+    open_github = 'O', -- open the notes repository in the browser
     scroll_down = '<C-n>', -- notes: scroll the open note down
-    scroll_up   = '<C-p>', -- notes: scroll the open note up
-    close         = 'q',     -- close notes (works from any notes window)
-    window_nav    = '<C-w>', -- prefix; then h/j/k/l → move between windows
-    toggle_panels = '<C-t>', -- hide/show Folders + Notes columns
-    change_folder = 'o',     -- folders: enter the folder under cursor / go up from row 1
-    select        = '<CR>',  -- folders: enter child folder / focus notes; notes: focus editor
+    scroll_up = '<C-p>', -- notes: scroll the open note up
+    close = 'q', -- close notes (works from any notes window)
+    window_nav = '<C-w>', -- prefix; then h/j/k/l → move between windows
+    toggle_panels = 'f', -- hide/show Folders + Notes columns
+    change_folder = 'o', -- folders: enter the folder under cursor / go up from row 1
+    select = '<CR>', -- folders: enter child folder / focus notes; notes: focus editor
   },
 
   -- Sync status icons shown in the tab label next to 'notes.nvim'.
