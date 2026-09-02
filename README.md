@@ -112,7 +112,7 @@ require('notes').setup({
   list_height = 10,
 
   -- Width of the folders column.
-  folders_width = 25,
+  folders_width = 30,
 
   -- Keymaps (override individually; unset keys keep their defaults).
   keys = {
